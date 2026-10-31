@@ -123,6 +123,12 @@ class ReviewerScripts(unittest.TestCase):
         self.assertNotIn('cat "$log"', text)
         self.assertIn("tail -n 10", text)
 
+    def test_run_review_succeeds_when_the_review_exists(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertIn(".head.sha", text)
+        self.assertIn("${published:-0}", text)
+        self.assertIn('exit 0', text)
+
     def test_setup_installs_the_skill_and_the_policies(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill = pathlib.Path(tmp) / "code-review"
