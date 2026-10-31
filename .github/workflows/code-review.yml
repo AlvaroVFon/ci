@@ -16,8 +16,8 @@ on:
         required: true
         type: string
       oidc-client-id:
-        description: "Client id of the GitHub Actions key created for the calling repository; the Console binds a key to one repository"
-        required: true
+        description: "Client id of the GitHub Actions key created for the calling repository; leave it empty only when OPENCODE_API_KEY is set"
+        required: false
         type: string
       verbose:
         description: "Stream the agent transcript to the workflow log; the log is public on public repositories"

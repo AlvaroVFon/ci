@@ -84,10 +84,10 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn("default: false", flat)
         self.assertIn("VERBOSE: ${{ inputs.verbose }}", flat)
 
-    def test_requires_a_client_id_for_the_calling_repository(self):
+    def test_ships_no_default_client_id(self):
         block = self.text.split("oidc-client-id:", 1)[1].split("verbose:", 1)[0]
-        self.assertIn("required: true", block)
         self.assertNotIn("default:", block)
+        self.assertIn("required: false", block)
         self.assertNotRegex(self.text, r"sk_[0-9a-f]{8}-")
 
     def test_authenticates_gh_for_the_skill(self):
@@ -257,6 +257,7 @@ class ReviewerScripts(unittest.TestCase):
 
     def test_sign_in_explains_a_rejected_exchange(self):
         text = (SCRIPTS / "sign-in.sh").read_text(encoding="utf-8")
+        self.assertIn("%{http_code}", text)
         self.assertIn("error_description", text)
         self.assertIn("GITHUB_REPOSITORY", text)
 

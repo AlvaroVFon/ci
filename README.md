@@ -23,11 +23,11 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v6
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v5
     with:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: main
-      ci-ref: v6
+      ci-ref: v5
       oidc-client-id: sk_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
@@ -52,7 +52,7 @@ precedence over the exchange and does not need `id-token: write`.
 | `model`         | yes      | OpenCode model in `provider/model` format, optionally `provider/model#variant` |
 | `skills-ref`    | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                   |
 | `ci-ref`        | yes      | Tag or commit of `AlvaroVFon/ci` with the scripts; must match the `uses:` ref  |
-| `oidc-client-id` | yes     | Console key id created for the calling repository                              |
+| `oidc-client-id` | no      | Console key id created for the calling repository; empty only with `OPENCODE_API_KEY` |
 | `verbose`       | no      | Stream the agent transcript to the workflow log (default `false`)              |
 
 
