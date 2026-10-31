@@ -10,10 +10,10 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v3
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v4
     with:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: 15b5fd22917f57919ced83c99d44343bdc04d148
-      ci-ref: v3
+      ci-ref: v4
     secrets:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
