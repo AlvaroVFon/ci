@@ -103,6 +103,10 @@ it reads and every command it runs. The run therefore stays silent by default:
 - a failed run prints only the last 10 lines, and `verbose: true` streams
   everything for debugging when you accept the exposure.
 
+The run counts as successful when a review exists for the head commit. The CLI
+exit code also reflects tool attempts that do not matter once the review is
+published, so it is reported as a warning instead of failing the check.
+
 Tokens are masked by the runner and by `::add-mask::`, so they never reach the log
 either way. What can appear in the log is repository content the agent read, and
 that content is already visible to whoever can read the repository.
