@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint workflows
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+
+      - name: Run contract tests
+        run: python3 -m unittest discover -s tests -v
