@@ -22,28 +22,29 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
     uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v1
     with:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: main
-    secrets:
-      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 ```
 
-Add the provider key as a repository or organization secret. The workflow accepts
-`OPENCODE_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`; pass the one your
-`model` needs.
+Authentication is OIDC by default: create a **GitHub Actions** key in the OpenCode
+Console, copy its client id into `oidc-client-id`, and the workflow exchanges the
+runner's OIDC token for a short-lived key. Nothing long-lived is stored, but the
+caller must grant `id-token: write` because a called workflow cannot elevate
+permissions.
 
-For OpenCode Go, create the key in the Console using the GitHub Actions key type:
-it produces a service account key (`oc_sk_...`) scoped to CI instead of your
-personal account.
+To use a static key instead, store it as the `OPENCODE_API_KEY` secret. It takes
+precedence over the exchange and does not need `id-token: write`.
 
 ### Inputs
 
-| Input        | Required | Description                                                                 |
-| ------------ | -------- | --------------------------------------------------------------------------- |
-| `model`      | yes      | OpenCode model in `provider/model` format, optionally `provider/model#variant` |
-| `skills-ref` | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                 |
+| Input           | Required | Description                                                                   |
+| --------------- | -------- | ----------------------------------------------------------------------------- |
+| `model`         | yes      | OpenCode model in `provider/model` format, optionally `provider/model#variant` |
+| `skills-ref`    | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                   |
+| `oidc-client-id` | no      | Console key id used for the OIDC exchange                                     |
 
 Pin `skills-ref` to a tag or commit. `main` gives you the latest skill at the cost
 of reviews that change without any change in your repo.
@@ -53,6 +54,7 @@ of reviews that change without any change in your repo.
 1. Skips drafts and pull requests from forks.
 2. Checks out the caller repo and the skills repo at `skills-ref`.
 3. Runs `review-pr/action.yml`, a composite action that:
+   - signs in to OpenCode with OIDC, or reuses the `OPENCODE_API_KEY` secret;
    - installs the skill in the OpenCode config directory, outside the caller repo;
    - installs reviewer policies: the review is read-only and can run `gh`, but
      `git push`, `gh pr merge` and file edits are denied;
@@ -64,7 +66,8 @@ A new push to the same pull request cancels the run in progress.
 ```text
 .github/workflows/code-review.yml   reusable workflow
 review-pr/action.yml                composite action the workflow calls
-scripts/check-provider-key.sh       fail fast without a provider key
+scripts/sign-in.sh                  OIDC exchange, or the static key fallback
+scripts/check-provider-key.sh       fail fast without a key
 scripts/setup-reviewer.sh           install skill and policies
 scripts/run-review.sh               install the CLI and run the review
 scripts/reviewer-permissions.json   policies copied into the OpenCode config
@@ -89,6 +92,8 @@ covers the workflow and the scripts.
   the bot does not count as a human approval for branch protection rules.
 - The job fails when the provider rejects the request or the agent cannot publish
   the review. The workflow needs network access to npm and the provider API.
+- The OIDC key is minted per run and never stored. If the Console key is revoked or
+  the client id changes, the job fails at sign-in.
 
 ## Local verification
 

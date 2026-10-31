@@ -11,10 +11,19 @@ inputs:
   skill-path:
     description: Path to the checkout of the code-review skill
     required: true
+  oidc-client-id:
+    description: Client id shown by the Console for the GitHub Actions key
+    required: false
 
 runs:
   using: composite
   steps:
+    - name: Sign in to OpenCode
+      shell: bash
+      env:
+        OIDC_CLIENT_ID: ${{ inputs.oidc-client-id }}
+      run: bash "$GITHUB_ACTION_PATH/../scripts/sign-in.sh"
+
     - name: Check provider key
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/../scripts/check-provider-key.sh"

@@ -11,12 +11,13 @@ on:
         description: "Tag or commit of AlvaroVFon/skills that provides the code-review skill"
         required: true
         type: string
+      oidc-client-id:
+        description: "Client id shown by the Console for the GitHub Actions key; empty falls back to the secret"
+        required: false
+        type: string
+        default: "sk_231ca0f9-d379-478a-b097-9fa7df5efb48"
     secrets:
       OPENCODE_API_KEY:
-        required: false
-      ANTHROPIC_API_KEY:
-        required: false
-      OPENAI_API_KEY:
         required: false
 
 jobs:
@@ -30,6 +31,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
     concurrency:
       group: code-review-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -51,13 +53,12 @@ jobs:
         uses: AlvaroVFon/ci/review-pr@v1
         env:
           GH_TOKEN: ${{ github.token }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          STATIC_OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
           model: ${{ inputs.model }}
           pr-number: ${{ github.event.pull_request.number }}
           skill-path: .skills/skills/quality/code-review
+          oidc-client-id: ${{ inputs.oidc-client-id }}
 
       - name: Drop the skills checkout
         if: always()

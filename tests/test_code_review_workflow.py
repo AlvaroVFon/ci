@@ -52,6 +52,7 @@ class WorkflowContract(unittest.TestCase):
         flat = self.flat()
         self.assertIn("contents: read", flat)
         self.assertIn("pull-requests: write", flat)
+        self.assertIn("id-token: write", flat)
         self.assertNotIn("contents: write", flat)
 
     def test_checks_out_the_skill_at_a_caller_pinned_ref(self):
@@ -66,6 +67,7 @@ class WorkflowContract(unittest.TestCase):
         flat = self.flat()
         self.assertIn("uses: AlvaroVFon/ci/review-pr@v1", flat)
         self.assertIn("skill-path: .skills/skills/quality/code-review", flat)
+        self.assertIn("oidc-client-id: ${{ inputs.oidc-client-id }}", flat)
 
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
@@ -82,6 +84,7 @@ class ReviewAction(unittest.TestCase):
 
     def test_hands_control_to_the_scripts(self):
         for script in (
+            "sign-in.sh",
             "check-provider-key.sh",
             "setup-reviewer.sh",
             "run-review.sh",
@@ -139,14 +142,43 @@ class ReviewerScripts(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("SKILL.md", result.stdout + result.stderr)
 
-    def test_provider_key_gate_requires_one_key(self):
-        for key in ("OPENCODE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
-            os.environ.pop(key, None)
+    def test_provider_key_gate_requires_a_key(self):
+        os.environ.pop("OPENCODE_API_KEY", None)
         self.assertEqual(self.run_script("check-provider-key.sh").returncode, 1)
         self.assertEqual(
             self.run_script("check-provider-key.sh", OPENCODE_API_KEY="test").returncode,
             0,
         )
+
+    def test_sign_in_prefers_the_static_secret(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            github_env = pathlib.Path(tmp) / "env"
+            result = self.run_script(
+                "sign-in.sh",
+                GITHUB_ENV=str(github_env),
+                STATIC_OPENCODE_API_KEY="static-key",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("OPENCODE_API_KEY=static-key", github_env.read_text())
+
+    def test_sign_in_requires_the_id_token_permission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_script(
+                "sign-in.sh",
+                GITHUB_ENV=str(pathlib.Path(tmp) / "env"),
+                STATIC_OPENCODE_API_KEY="",
+                ACTIONS_ID_TOKEN_REQUEST_URL="",
+                ACTIONS_ID_TOKEN_REQUEST_TOKEN="",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("id-token", result.stdout + result.stderr)
+
+    def test_sign_in_exchanges_the_oidc_token(self):
+        text = (SCRIPTS / "sign-in.sh").read_text(encoding="utf-8")
+        self.assertIn("https://opencode.ai/console", text)
+        self.assertIn("token-exchange", text)
+        self.assertIn("::add-mask::", text)
+        self.assertIn("GITHUB_ENV", text)
 
     def test_permissions_deny_mutations(self):
         rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]
