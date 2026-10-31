@@ -47,6 +47,7 @@ precedence over the exchange and does not need `id-token: write`.
 | `skills-ref`    | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                   |
 | `ci-ref`        | yes      | Tag or commit of `AlvaroVFon/ci` with the scripts; must match the `uses:` ref  |
 | `oidc-client-id` | no      | Console key id used for the OIDC exchange (defaults to the pull request scoped key) |
+| `verbose`       | no      | Stream the agent transcript to the workflow log (default `false`)              |
 
 Pin `skills-ref` to a tag or commit. `main` gives you the latest skill at the cost
 of reviews that change without any change in your repo.
@@ -91,6 +92,20 @@ the caller picked. That exact bug shipped once: the workflow at `v2` kept callin
 Call `@vN`, not `@main`. With a branch reference, a change here breaks every
 project at once. `ci-ref` must carry the same value as the `uses:` ref; a contract
 test in `tests/` fails when they diverge.
+
+### Logs
+
+On a public repository the workflow log is public, and the agent prints every file
+it reads and every command it runs. The run therefore stays silent by default:
+
+- session sharing is disabled (`"share": "disabled"`), so no share link exists;
+- the agent transcript goes to a file on the runner and never to the log;
+- a failed run prints only the last 10 lines, and `verbose: true` streams
+  everything for debugging when you accept the exposure.
+
+Tokens are masked by the runner and by `::add-mask::`, so they never reach the log
+either way. What can appear in the log is repository content the agent read, and
+that content is already visible to whoever can read the repository.
 
 ### Limits
 
