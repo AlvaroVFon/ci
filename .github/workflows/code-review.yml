@@ -34,17 +34,6 @@ jobs:
       group: code-review-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - name: Preflight
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          if [ -z "${OPENCODE_API_KEY}${ANTHROPIC_API_KEY}${OPENAI_API_KEY}" ]; then
-            echo "::error::No provider API key. Pass one of OPENCODE_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY."
-            exit 1
-          fi
-
       - name: Checkout caller repository
         uses: actions/checkout@v7
         with:
@@ -58,48 +47,18 @@ jobs:
           path: .skills
           persist-credentials: false
 
-      - name: Install the skill and the reviewer policies
-        run: |
-          config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-          mkdir -p "$config/skills"
-          cp -R .skills/skills/quality/code-review "$config/skills/code-review"
-          rm -rf .skills
-          cat > "$config/opencode.json" <<'JSON'
-          {
-            "permissions": [
-              { "action": "read", "resource": "*", "effect": "allow" },
-              { "action": "glob", "resource": "*", "effect": "allow" },
-              { "action": "grep", "resource": "*", "effect": "allow" },
-              { "action": "skill", "resource": "*", "effect": "allow" },
-              { "action": "webfetch", "resource": "*", "effect": "allow" },
-              { "action": "external_directory", "resource": "*", "effect": "allow" },
-              { "action": "edit", "resource": "*", "effect": "deny" },
-              { "action": "edit", "resource": "/tmp/*", "effect": "allow" },
-              { "action": "subagent", "resource": "*", "effect": "deny" },
-              { "action": "shell", "resource": "*", "effect": "allow" },
-              { "action": "shell", "resource": "git push*", "effect": "deny" },
-              { "action": "shell", "resource": "git * push*", "effect": "deny" },
-              { "action": "shell", "resource": "gh pr merge*", "effect": "deny" },
-              { "action": "shell", "resource": "gh api *merge*", "effect": "deny" }
-            ]
-          }
-          JSON
-
       - name: Review pull request
+        uses: AlvaroVFon/ci/review-pr@v1
         env:
           GH_TOKEN: ${{ github.token }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          MODEL: ${{ inputs.model }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          npm install --global @opencode/cli@2
-          prompt="$(cat <<EOF
-          Load the code-review skill with the skill tool and review pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}.
-          Read the diff against the base branch, verify each claim against the surrounding code, and cite file:line.
-          Publish the review with gh pr review using the verdict required by the skill.
-          Do not edit files, do not commit, do not push and never merge.
-          EOF
-          )"
-          opencode run --standalone --auto --model "$MODEL" "$prompt"
+        with:
+          model: ${{ inputs.model }}
+          pr-number: ${{ github.event.pull_request.number }}
+          skill-path: .skills/skills/quality/code-review
+
+      - name: Drop the skills checkout
+        if: always()
+        run: rm -rf .skills

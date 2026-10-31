@@ -1,0 +1,33 @@
+name: Review pull request
+description: Review the triggering pull request with the code-review skill and publish the verdict
+
+inputs:
+  model:
+    description: OpenCode model in provider/model format
+    required: true
+  pr-number:
+    description: Number of the pull request to review
+    required: true
+  skill-path:
+    description: Path to the checkout of the code-review skill
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check provider key
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../scripts/check-provider-key.sh"
+
+    - name: Install the skill and the reviewer policies
+      shell: bash
+      env:
+        SKILL_PATH: ${{ inputs.skill-path }}
+      run: bash "$GITHUB_ACTION_PATH/../scripts/setup-reviewer.sh"
+
+    - name: Run the review
+      shell: bash
+      env:
+        MODEL: ${{ inputs.model }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: bash "$GITHUB_ACTION_PATH/../scripts/run-review.sh"

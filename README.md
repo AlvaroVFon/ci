@@ -34,6 +34,10 @@ Add the provider key as a repository or organization secret. The workflow accept
 `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`; pass the one your
 `model` needs.
 
+For OpenCode Go, create the key in the Console using the GitHub Actions key type:
+it produces a service account key (`oc_sk_...`) scoped to CI instead of your
+personal account.
+
 ### Inputs
 
 | Input        | Required | Description                                                                 |
@@ -48,18 +52,34 @@ of reviews that change without any change in your repo.
 
 1. Skips drafts and pull requests from forks.
 2. Checks out the caller repo and the skills repo at `skills-ref`.
-3. Installs the skill in the OpenCode config directory, outside the caller repo.
-4. Installs reviewer policies: the review is read-only and can run `gh`, but
-   `git push`, `gh pr merge` and file edits are denied.
-5. Runs `opencode run --standalone --auto` with a prompt that loads the skill.
-6. The skill publishes the review with `gh pr review`.
+3. Runs `review-pr/action.yml`, a composite action that:
+   - installs the skill in the OpenCode config directory, outside the caller repo;
+   - installs reviewer policies: the review is read-only and can run `gh`, but
+     `git push`, `gh pr merge` and file edits are denied;
+   - runs `opencode run --standalone --auto` with a prompt that loads the skill.
+4. The skill publishes the review with `gh pr review`.
 
 A new push to the same pull request cancels the run in progress.
+
+```text
+.github/workflows/code-review.yml   reusable workflow
+review-pr/action.yml                composite action the workflow calls
+scripts/check-provider-key.sh       fail fast without a provider key
+scripts/setup-reviewer.sh           install skill and policies
+scripts/run-review.sh               install the CLI and run the review
+scripts/reviewer-permissions.json   policies copied into the OpenCode config
+```
+
+The scripts live outside the workflow because a reusable workflow runs in the
+caller's workspace: this repo is not checked out there. A composite action is the
+supported way to ship code with the workflow, and `$GITHUB_ACTION_PATH` gives the
+scripts their location.
 
 ### Versioning
 
 Call `@v1`, not `@main`. With a branch reference, a change here breaks every
-project at once.
+project at once. The composite action is pinned to the same `v1`, so one tag
+covers the workflow and the scripts.
 
 ### Limits
 
