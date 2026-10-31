@@ -11,6 +11,10 @@ on:
         description: "Tag or commit of AlvaroVFon/skills that provides the code-review skill"
         required: true
         type: string
+      ci-ref:
+        description: "Tag or commit of AlvaroVFon/ci that provides the scripts; must match the ref this workflow was called at"
+        required: true
+        type: string
       oidc-client-id:
         description: "Client id shown by the Console for the GitHub Actions key; empty falls back to the secret"
         required: false
@@ -49,17 +53,35 @@ jobs:
           path: .skills
           persist-credentials: false
 
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v7
+        with:
+          repository: AlvaroVFon/ci
+          ref: ${{ inputs.ci-ref }}
+          path: .ci
+          persist-credentials: false
+
+      - name: Sign in to OpenCode
+        env:
+          OIDC_CLIENT_ID: ${{ inputs.oidc-client-id }}
+          STATIC_OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: bash .ci/scripts/sign-in.sh
+
+      - name: Check OpenCode key
+        run: bash .ci/scripts/check-provider-key.sh
+
+      - name: Install the skill and the reviewer policies
+        env:
+          SKILL_PATH: .skills/skills/quality/code-review
+        run: bash .ci/scripts/setup-reviewer.sh
+
       - name: Review pull request
-        uses: AlvaroVFon/ci/review-pr@v1
         env:
           GH_TOKEN: ${{ github.token }}
-          STATIC_OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        with:
-          model: ${{ inputs.model }}
-          pr-number: ${{ github.event.pull_request.number }}
-          skill-path: .skills/skills/quality/code-review
-          oidc-client-id: ${{ inputs.oidc-client-id }}
+          MODEL: ${{ inputs.model }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .ci/scripts/run-review.sh
 
-      - name: Drop the skills checkout
+      - name: Drop the checkouts
         if: always()
-        run: rm -rf .skills
+        run: rm -rf .skills .ci
