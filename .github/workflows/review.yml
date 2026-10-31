@@ -1,0 +1,16 @@
+name: review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v1
+    with:
+      model: opencode-go/deepseek-v4.1-flash
+      skills-ref: 15b5fd22917f57919ced83c99d44343bdc04d148
