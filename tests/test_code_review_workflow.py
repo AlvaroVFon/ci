@@ -18,6 +18,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "code-review.yml"
+CALLER = ROOT / ".github" / "workflows" / "review.yml"
 ACTION = ROOT / "review-pr" / "action.yml"
 SCRIPTS = ROOT / "scripts"
 PERMISSIONS = SCRIPTS / "reviewer-permissions.json"
@@ -71,6 +72,39 @@ class WorkflowContract(unittest.TestCase):
 
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
+
+
+class CallerContract(unittest.TestCase):
+    """The caller lives in this repo, so its wiring is testable too."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.caller = CALLER.read_text(encoding="utf-8")
+        cls.reusable = WORKFLOW.read_text(encoding="utf-8")
+
+    def test_pins_the_reusable_workflow(self):
+        self.assertIn(
+            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v2", self.caller
+        )
+
+    def test_grants_the_permissions_the_called_job_needs(self):
+        for permission in ("contents: read", "pull-requests: write", "id-token: write"):
+            with self.subTest(permission=permission):
+                self.assertIn(permission, self.caller)
+
+    def test_passes_only_inputs_declared_by_the_workflow(self):
+        declared = self.declared_inputs()
+        passed = set(re.findall(r"(?m)^      ([^\s:#]+):", self.with_block()))
+        self.assertTrue(declared, "no inputs parsed from the reusable workflow")
+        self.assertLessEqual(passed, declared, passed - declared)
+
+    def declared_inputs(self):
+        block = self.reusable.split("workflow_call:", 1)[1].split("secrets:", 1)[0]
+        return set(re.findall(r"(?m)^      ([^\s:#]+):\s*$", block))
+
+    def with_block(self):
+        block = self.caller.split("with:", 1)[1]
+        return block.split("secrets:", 1)[0]
 
 
 class ReviewAction(unittest.TestCase):
