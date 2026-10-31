@@ -18,6 +18,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "code-review.yml"
+CALLER = ROOT / ".github" / "workflows" / "review.yml"
 SCRIPTS = ROOT / "scripts"
 PERMISSIONS = SCRIPTS / "reviewer-permissions.json"
 
@@ -85,6 +86,57 @@ class WorkflowContract(unittest.TestCase):
 
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
+
+
+class CallerContract(unittest.TestCase):
+    """The caller lives in this repo, so its wiring is testable too."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.caller = CALLER.read_text(encoding="utf-8")
+        cls.reusable = WORKFLOW.read_text(encoding="utf-8")
+
+    def test_pins_the_reusable_workflow(self):
+        self.assertIn(
+            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v5", self.caller
+        )
+
+    def test_uses_and_scripts_ref_match(self):
+        workflow_ref = re.search(r"code-review\.yml@(\S+)", self.caller).group(1)
+        scripts_ref = re.search(r"(?m)^      ci-ref:\s*(\S+)", self.caller).group(1)
+        self.assertEqual(workflow_ref, scripts_ref)
+
+    def test_grants_the_permissions_the_called_job_needs(self):
+        for permission in ("contents: read", "pull-requests: write", "id-token: write"):
+            with self.subTest(permission=permission):
+                self.assertIn(permission, self.caller)
+
+    def test_passes_only_inputs_declared_by_the_workflow(self):
+        declared = set(self.input_specs())
+        passed = self.passed_inputs()
+        self.assertTrue(declared, "no inputs parsed from the reusable workflow")
+        self.assertLessEqual(passed, declared, passed - declared)
+
+    def test_passes_every_required_input(self):
+        required = {name for name, spec in self.input_specs().items() if spec["required"]}
+        self.assertTrue(required, "no required inputs parsed from the workflow")
+        self.assertLessEqual(required, self.passed_inputs())
+
+    def input_specs(self):
+        block = self.reusable.split("workflow_call:", 1)[1].split("secrets:", 1)[0]
+        specs, current = {}, None
+        for line in block.splitlines():
+            name = re.match(r"^      ([^\s:#]+):\s*$", line)
+            if name:
+                current = name.group(1)
+                specs[current] = {"required": False}
+            elif current and re.match(r"^        required:\s*true\s*$", line):
+                specs[current]["required"] = True
+        return specs
+
+    def passed_inputs(self):
+        block = self.caller.split("with:", 1)[1].split("secrets:", 1)[0]
+        return set(re.findall(r"(?m)^      ([^\s:#]+):", block))
 
 
 class ReviewerScripts(unittest.TestCase):
