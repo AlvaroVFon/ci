@@ -108,7 +108,7 @@ class ReviewerScripts(unittest.TestCase):
         text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
         self.assertIn("opencode run --standalone --auto", text)
         self.assertIn("@opencode/cli@2", text)
-        self.assertIn("/pulls/${PR_NUMBER}/reviews", text)
+        self.assertIn("${api}/reviews", text)
         self.assertIn("inline comment", text)
         self.assertIn("Skip README", text)
 
