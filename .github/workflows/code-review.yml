@@ -20,6 +20,11 @@ on:
         required: false
         type: string
         default: "sk_bfa81d64-af1d-4242-b093-5cefe33c6956"
+      verbose:
+        description: "Stream the agent transcript to the workflow log; the log is public on public repositories"
+        required: false
+        type: boolean
+        default: false
     secrets:
       OPENCODE_API_KEY:
         required: false
@@ -80,6 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MODEL: ${{ inputs.model }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          VERBOSE: ${{ inputs.verbose }}
         run: bash .ci/scripts/run-review.sh
 
       - name: Drop the checkouts
