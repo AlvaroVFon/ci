@@ -1,0 +1,65 @@
+name: code-review
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: "OpenCode model in provider/model format, for example opencode-go/deepseek-v4.1-flash"
+        required: true
+        type: string
+      skills-ref:
+        description: "Tag or commit of AlvaroVFon/skills that provides the code-review skill"
+        required: true
+        type: string
+      oidc-client-id:
+        description: "Client id shown by the Console for the GitHub Actions key; empty falls back to the secret"
+        required: false
+        type: string
+        default: "sk_231ca0f9-d379-478a-b097-9fa7df5efb48"
+    secrets:
+      OPENCODE_API_KEY:
+        required: false
+
+jobs:
+  review:
+    name: Review pull request
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    concurrency:
+      group: code-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Checkout skills
+        uses: actions/checkout@v7
+        with:
+          repository: AlvaroVFon/skills
+          ref: ${{ inputs.skills-ref }}
+          path: .skills
+          persist-credentials: false
+
+      - name: Review pull request
+        uses: AlvaroVFon/ci/review-pr@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATIC_OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        with:
+          model: ${{ inputs.model }}
+          pr-number: ${{ github.event.pull_request.number }}
+          skill-path: .skills/skills/quality/code-review
+          oidc-client-id: ${{ inputs.oidc-client-id }}
+
+      - name: Drop the skills checkout
+        if: always()
+        run: rm -rf .skills
