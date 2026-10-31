@@ -46,12 +46,12 @@ jobs:
           fi
 
       - name: Checkout caller repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Checkout skills
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AlvaroVFon/skills
           ref: ${{ inputs.skills-ref }}

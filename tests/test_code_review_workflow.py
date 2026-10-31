@@ -54,6 +54,9 @@ class CodeReviewWorkflowContract(unittest.TestCase):
         self.assertIn("repository: AlvaroVFon/skills", flat)
         self.assertIn("ref: ${{ inputs.skills-ref }}", flat)
 
+    def test_pins_current_action_versions(self):
+        self.assertIn("actions/checkout@v7", self.flat())
+
     def test_installs_a_pinned_cli(self):
         self.assertIn("@opencode/cli@2", self.flat())
 
