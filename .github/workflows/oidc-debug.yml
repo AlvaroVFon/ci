@@ -25,6 +25,10 @@ jobs:
           if [ "$oidc_status" != "200" ]; then cat /tmp/oidc.json; exit 0; fi
           oidc=$(jq -r .value /tmp/oidc.json)
           echo "jwt chars=${#oidc}"
+          payload=$(printf '%s' "$oidc" | cut -d. -f2 | tr '_-' '/+')
+          case $(( ${#payload} % 4 )) in 2) payload="$payload==";; 3) payload="$payload=";; esac
+          printf '%s' "$payload" | base64 -d > /tmp/claims.json
+          jq '{aud, sub, repository, repository_owner, ref, event_name, workflow_ref, job_workflow_ref}' /tmp/claims.json
           status=$(curl -sS -o /tmp/token.json -w '%{http_code}' \
             https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
