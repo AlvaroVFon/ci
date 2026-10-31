@@ -23,18 +23,24 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v3
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v6
     with:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: main
-      ci-ref: v3
+      ci-ref: v6
+      oidc-client-id: sk_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
-Authentication is OIDC by default: create a **GitHub Actions** key in the OpenCode
-Console, copy its client id into `oidc-client-id`, and the workflow exchanges the
-runner's OIDC token for a short-lived key. Nothing long-lived is stored, but the
-caller must grant `id-token: write` because a called workflow cannot elevate
-permissions.
+Authentication is OIDC: create a **GitHub Actions** key in the OpenCode Console,
+copy its client id into `oidc-client-id`, and the workflow exchanges the runner's
+OIDC token for a short-lived key. Nothing long-lived is stored, but the caller must
+grant `id-token: write` because a called workflow cannot elevate permissions.
+
+The Console binds a GitHub Actions key to the repository it was created for, so
+**each caller needs its own key**. Reusing the key of another repository fails at
+sign-in, before the agent runs, with `OpenCode rejected the OIDC exchange:
+The token could not be exchanged for this credential`. The workflow ships no
+default client id for that reason.
 
 To use a static key instead, store it as the `OPENCODE_API_KEY` secret. It takes
 precedence over the exchange and does not need `id-token: write`.
@@ -46,8 +52,9 @@ precedence over the exchange and does not need `id-token: write`.
 | `model`         | yes      | OpenCode model in `provider/model` format, optionally `provider/model#variant` |
 | `skills-ref`    | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                   |
 | `ci-ref`        | yes      | Tag or commit of `AlvaroVFon/ci` with the scripts; must match the `uses:` ref  |
-| `oidc-client-id` | no      | Console key id used for the OIDC exchange (defaults to the pull request scoped key) |
+| `oidc-client-id` | yes     | Console key id created for the calling repository                              |
 | `verbose`       | no      | Stream the agent transcript to the workflow log (default `false`)              |
+
 
 Pin `skills-ref` to a tag or commit. `main` gives you the latest skill at the cost
 of reviews that change without any change in your repo.

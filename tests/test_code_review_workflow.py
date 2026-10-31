@@ -84,6 +84,12 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn("default: false", flat)
         self.assertIn("VERBOSE: ${{ inputs.verbose }}", flat)
 
+    def test_requires_a_client_id_for_the_calling_repository(self):
+        block = self.text.split("oidc-client-id:", 1)[1].split("verbose:", 1)[0]
+        self.assertIn("required: true", block)
+        self.assertNotIn("default:", block)
+        self.assertNotRegex(self.text, r"sk_[0-9a-f]{8}-")
+
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
 
@@ -110,6 +116,9 @@ class CallerContract(unittest.TestCase):
         for permission in ("contents: read", "pull-requests: write", "id-token: write"):
             with self.subTest(permission=permission):
                 self.assertIn(permission, self.caller)
+
+    def test_passes_a_client_id_scoped_to_this_repository(self):
+        self.assertRegex(self.caller, r"(?m)^      oidc-client-id: sk_[0-9a-f-]+$")
 
     def test_passes_only_inputs_declared_by_the_workflow(self):
         declared = set(self.input_specs())
@@ -245,6 +254,11 @@ class ReviewerScripts(unittest.TestCase):
         self.assertIn("token-exchange", text)
         self.assertIn("::add-mask::", text)
         self.assertIn("GITHUB_ENV", text)
+
+    def test_sign_in_explains_a_rejected_exchange(self):
+        text = (SCRIPTS / "sign-in.sh").read_text(encoding="utf-8")
+        self.assertIn("error_description", text)
+        self.assertIn("GITHUB_REPOSITORY", text)
 
     def test_permissions_deny_mutations(self):
         rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]

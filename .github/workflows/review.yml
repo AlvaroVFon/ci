@@ -15,5 +15,6 @@ jobs:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: 15b5fd22917f57919ced83c99d44343bdc04d148
       ci-ref: v5
+      oidc-client-id: sk_bfa81d64-af1d-4242-b093-5cefe33c6956
     secrets:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

@@ -20,14 +20,21 @@ audience="${OIDC_AUDIENCE:-https://opencode.ai/console}"
 oidc="$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" | jq -r .value)"
 
-token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+response="$(curl -sS -X POST https://opencode.ai/console/auth/oauth/token \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
   -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
   -d client_id="$OIDC_CLIENT_ID" \
-  -d subject_token="$oidc" | jq -r .access_token)"
+  -d subject_token="$oidc")" || {
+  echo "::error::Could not reach the OpenCode token endpoint."
+  exit 1
+}
 
-if [[ -z "$token" || "$token" == "null" ]]; then
-  echo "::error::OpenCode did not return an access token."
+token="$(jq -r '.access_token // empty' <<<"$response" 2>/dev/null || true)"
+
+if [[ -z "$token" ]]; then
+  reason="$(jq -r '.error_description // .error // empty' <<<"$response" 2>/dev/null || true)"
+  echo "::error::OpenCode rejected the OIDC exchange: ${reason:-empty response}"
+  echo "::error::The GitHub Actions key ${OIDC_CLIENT_ID} must be created for ${GITHUB_REPOSITORY:-the calling repository}. A key bound to another repository fails here."
   exit 1
 fi
 
