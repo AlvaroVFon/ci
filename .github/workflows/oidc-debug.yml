@@ -1,0 +1,36 @@
+name: oidc-debug
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Exchange
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_231ca0f9-d379-478a-b097-9fa7df5efb48
+        run: |
+          set -euo pipefail
+          echo "request url present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
+          oidc_status=$(curl -sS -o /tmp/oidc.json -w '%{http_code}' \
+            --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE")
+          echo "oidc status=$oidc_status"
+          if [ "$oidc_status" != "200" ]; then cat /tmp/oidc.json; exit 0; fi
+          oidc=$(jq -r .value /tmp/oidc.json)
+          echo "jwt chars=${#oidc}"
+          status=$(curl -sS -o /tmp/token.json -w '%{http_code}' \
+            https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="$CLIENT_ID" \
+            -d subject_token="$oidc")
+          echo "exchange status=$status"
+          if [ "$status" != "200" ]; then cat /tmp/token.json; echo; fi
+          jq -r 'keys' /tmp/token.json 2>/dev/null || true
