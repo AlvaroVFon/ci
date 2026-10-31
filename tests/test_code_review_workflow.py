@@ -77,6 +77,12 @@ class WorkflowContract(unittest.TestCase):
     def test_has_no_hidden_action_pin(self):
         self.assertNotIn("uses: AlvaroVFon/ci/", self.flat())
 
+    def test_exposes_a_verbose_switch_that_is_off_by_default(self):
+        flat = self.flat()
+        self.assertIn("verbose:", flat)
+        self.assertIn("default: false", flat)
+        self.assertIn("VERBOSE: ${{ inputs.verbose }}", flat)
+
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
 
@@ -109,6 +115,13 @@ class ReviewerScripts(unittest.TestCase):
     def test_disables_session_sharing(self):
         config = json.loads(PERMISSIONS.read_text(encoding="utf-8"))
         self.assertEqual(config.get("share"), "disabled")
+
+    def test_run_review_keeps_the_transcript_off_the_log(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertIn('>"$log" 2>&1', text)
+        self.assertIn("VERBOSE", text)
+        self.assertNotIn('cat "$log"', text)
+        self.assertIn("tail -n 10", text)
 
     def test_setup_installs_the_skill_and_the_policies(self):
         with tempfile.TemporaryDirectory() as tmp:
