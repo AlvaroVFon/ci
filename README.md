@@ -23,11 +23,11 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v5
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v6
     with:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: main
-      ci-ref: v5
+      ci-ref: v6
       oidc-client-id: sk_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
