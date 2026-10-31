@@ -23,10 +23,11 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v1
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v3
     with:
       model: opencode-go/deepseek-v4.1-flash
       skills-ref: main
+      ci-ref: v3
 ```
 
 Authentication is OIDC by default: create a **GitHub Actions** key in the OpenCode
@@ -44,7 +45,8 @@ precedence over the exchange and does not need `id-token: write`.
 | --------------- | -------- | ----------------------------------------------------------------------------- |
 | `model`         | yes      | OpenCode model in `provider/model` format, optionally `provider/model#variant` |
 | `skills-ref`    | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                   |
-| `oidc-client-id` | no      | Console key id used for the OIDC exchange                                     |
+| `ci-ref`        | yes      | Tag or commit of `AlvaroVFon/ci` with the scripts; must match the `uses:` ref  |
+| `oidc-client-id` | no      | Console key id used for the OIDC exchange (defaults to the pull request scoped key) |
 
 Pin `skills-ref` to a tag or commit. `main` gives you the latest skill at the cost
 of reviews that change without any change in your repo.
@@ -52,20 +54,24 @@ of reviews that change without any change in your repo.
 ### What it does
 
 1. Skips drafts and pull requests from forks.
-2. Checks out the caller repo and the skills repo at `skills-ref`.
-3. Runs `review-pr/action.yml`, a composite action that:
-   - signs in to OpenCode with OIDC, or reuses the `OPENCODE_API_KEY` secret;
-   - installs the skill in the OpenCode config directory, outside the caller repo;
-   - installs reviewer policies: the review is read-only and can run `gh`, but
-     `git push`, `gh pr merge` and file edits are denied;
-   - runs `opencode run --standalone --auto` with a prompt that loads the skill.
-4. The skill publishes the review with `gh pr review`.
+2. Checks out the caller repo, the skills repo at `skills-ref`, and this repo's
+   scripts at `ci-ref`.
+3. Runs the scripts in order:
+   - `sign-in.sh` signs in to OpenCode with OIDC, or reuses `OPENCODE_API_KEY`;
+   - `check-provider-key.sh` stops when no key is available;
+   - `setup-reviewer.sh` installs the skill in the OpenCode config directory,
+     outside the caller repo, together with the reviewer policies: the review is
+     read-only, `git push`, `gh pr merge` and file edits are denied, and session
+     sharing is disabled so the transcript is never published;
+   - `run-review.sh` installs the CLI and runs the agent with a prompt that limits
+     reading to the diff and the code it calls, and requires every finding that can
+     be anchored to a changed line to be posted as an inline comment in one review.
+4. The agent publishes the review with `gh api .../reviews`.
 
 A new push to the same pull request cancels the run in progress.
 
 ```text
 .github/workflows/code-review.yml   reusable workflow
-review-pr/action.yml                composite action the workflow calls
 scripts/sign-in.sh                  OIDC exchange, or the static key fallback
 scripts/check-provider-key.sh       fail fast without a key
 scripts/setup-reviewer.sh           install skill and policies
@@ -74,15 +80,17 @@ scripts/reviewer-permissions.json   policies copied into the OpenCode config
 ```
 
 The scripts live outside the workflow because a reusable workflow runs in the
-caller's workspace: this repo is not checked out there. A composite action is the
-supported way to ship code with the workflow, and `$GITHUB_ACTION_PATH` gives the
-scripts their location.
+caller's workspace: this repo is not checked out there. The workflow checks them
+out at `ci-ref` instead of using a composite action, because an action pinned
+inside the workflow is a second, hidden version that silently drifts from the tag
+the caller picked. That exact bug shipped once: the workflow at `v2` kept calling
+`review-pr@v1`, so every v2 change was ignored.
 
 ### Versioning
 
-Call `@v1`, not `@main`. With a branch reference, a change here breaks every
-project at once. The composite action is pinned to the same `v1`, so one tag
-covers the workflow and the scripts.
+Call `@vN`, not `@main`. With a branch reference, a change here breaks every
+project at once. `ci-ref` must carry the same value as the `uses:` ref; a contract
+test in `tests/` fails when they diverge.
 
 ### Limits
 

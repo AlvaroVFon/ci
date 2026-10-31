@@ -19,7 +19,6 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "code-review.yml"
 CALLER = ROOT / ".github" / "workflows" / "review.yml"
-ACTION = ROOT / "review-pr" / "action.yml"
 SCRIPTS = ROOT / "scripts"
 PERMISSIONS = SCRIPTS / "reviewer-permissions.json"
 
@@ -64,11 +63,20 @@ class WorkflowContract(unittest.TestCase):
     def test_pins_current_action_versions(self):
         self.assertIn("actions/checkout@v7", self.flat())
 
-    def test_delegates_the_run_to_the_composite_action(self):
+    def test_delegates_the_run_to_versioned_scripts(self):
         flat = self.flat()
-        self.assertIn("uses: AlvaroVFon/ci/review-pr@v1", flat)
-        self.assertIn("skill-path: .skills/skills/quality/code-review", flat)
-        self.assertIn("oidc-client-id: ${{ inputs.oidc-client-id }}", flat)
+        self.assertIn("ref: ${{ inputs.ci-ref }}", flat)
+        for script in (
+            ".ci/scripts/sign-in.sh",
+            ".ci/scripts/check-provider-key.sh",
+            ".ci/scripts/setup-reviewer.sh",
+            ".ci/scripts/run-review.sh",
+        ):
+            with self.subTest(script=script):
+                self.assertIn(script, flat)
+
+    def test_has_no_hidden_action_pin(self):
+        self.assertNotIn("uses: AlvaroVFon/ci/", self.flat())
 
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
@@ -84,8 +92,13 @@ class CallerContract(unittest.TestCase):
 
     def test_pins_the_reusable_workflow(self):
         self.assertIn(
-            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v2", self.caller
+            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v3", self.caller
         )
+
+    def test_uses_and_scripts_ref_match(self):
+        workflow_ref = re.search(r"code-review\.yml@(\S+)", self.caller).group(1)
+        scripts_ref = re.search(r"(?m)^      ci-ref:\s*(\S+)", self.caller).group(1)
+        self.assertEqual(workflow_ref, scripts_ref)
 
     def test_grants_the_permissions_the_called_job_needs(self):
         for permission in ("contents: read", "pull-requests: write", "id-token: write"):
@@ -93,37 +106,31 @@ class CallerContract(unittest.TestCase):
                 self.assertIn(permission, self.caller)
 
     def test_passes_only_inputs_declared_by_the_workflow(self):
-        declared = self.declared_inputs()
-        passed = set(re.findall(r"(?m)^      ([^\s:#]+):", self.with_block()))
+        declared = set(self.input_specs())
+        passed = self.passed_inputs()
         self.assertTrue(declared, "no inputs parsed from the reusable workflow")
         self.assertLessEqual(passed, declared, passed - declared)
 
-    def declared_inputs(self):
+    def test_passes_every_required_input(self):
+        required = {name for name, spec in self.input_specs().items() if spec["required"]}
+        self.assertTrue(required, "no required inputs parsed from the workflow")
+        self.assertLessEqual(required, self.passed_inputs())
+
+    def input_specs(self):
         block = self.reusable.split("workflow_call:", 1)[1].split("secrets:", 1)[0]
-        return set(re.findall(r"(?m)^      ([^\s:#]+):\s*$", block))
+        specs, current = {}, None
+        for line in block.splitlines():
+            name = re.match(r"^      ([^\s:#]+):\s*$", line)
+            if name:
+                current = name.group(1)
+                specs[current] = {"required": False}
+            elif current and re.match(r"^        required:\s*true\s*$", line):
+                specs[current]["required"] = True
+        return specs
 
-    def with_block(self):
-        block = self.caller.split("with:", 1)[1]
-        return block.split("secrets:", 1)[0]
-
-
-class ReviewAction(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.text = ACTION.read_text(encoding="utf-8")
-
-    def test_declares_its_inputs_as_required(self):
-        for name in ("model", "pr-number", "skill-path"):
-            self.assertRegex(self.text, rf"(?m)^  {name}:")
-
-    def test_hands_control_to_the_scripts(self):
-        for script in (
-            "sign-in.sh",
-            "check-provider-key.sh",
-            "setup-reviewer.sh",
-            "run-review.sh",
-        ):
-            self.assertIn(script, self.text)
+    def passed_inputs(self):
+        block = self.caller.split("with:", 1)[1].split("secrets:", 1)[0]
+        return set(re.findall(r"(?m)^      ([^\s:#]+):", block))
 
 
 class ReviewerScripts(unittest.TestCase):
@@ -147,7 +154,13 @@ class ReviewerScripts(unittest.TestCase):
         text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
         self.assertIn("opencode run --standalone --auto", text)
         self.assertIn("@opencode/cli@2", text)
-        self.assertIn("gh pr review", text)
+        self.assertIn("/pulls/${PR_NUMBER}/reviews", text)
+        self.assertIn("inline comment", text)
+        self.assertIn("Skip README", text)
+
+    def test_disables_session_sharing(self):
+        config = json.loads(PERMISSIONS.read_text(encoding="utf-8"))
+        self.assertEqual(config.get("share"), "disabled")
 
     def test_setup_installs_the_skill_and_the_policies(self):
         with tempfile.TemporaryDirectory() as tmp:
