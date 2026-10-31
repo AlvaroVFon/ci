@@ -18,7 +18,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "code-review.yml"
-ACTION = ROOT / "review-pr" / "action.yml"
 SCRIPTS = ROOT / "scripts"
 PERMISSIONS = SCRIPTS / "reviewer-permissions.json"
 
@@ -63,33 +62,23 @@ class WorkflowContract(unittest.TestCase):
     def test_pins_current_action_versions(self):
         self.assertIn("actions/checkout@v7", self.flat())
 
-    def test_delegates_the_run_to_the_composite_action(self):
+    def test_delegates_the_run_to_versioned_scripts(self):
         flat = self.flat()
-        self.assertIn("uses: AlvaroVFon/ci/review-pr@v1", flat)
-        self.assertIn("skill-path: .skills/skills/quality/code-review", flat)
-        self.assertIn("oidc-client-id: ${{ inputs.oidc-client-id }}", flat)
+        self.assertIn("ref: ${{ inputs.ci-ref }}", flat)
+        for script in (
+            ".ci/scripts/sign-in.sh",
+            ".ci/scripts/check-provider-key.sh",
+            ".ci/scripts/setup-reviewer.sh",
+            ".ci/scripts/run-review.sh",
+        ):
+            with self.subTest(script=script):
+                self.assertIn(script, flat)
+
+    def test_has_no_hidden_action_pin(self):
+        self.assertNotIn("uses: AlvaroVFon/ci/", self.flat())
 
     def test_authenticates_gh_for_the_skill(self):
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.flat())
-
-
-class ReviewAction(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.text = ACTION.read_text(encoding="utf-8")
-
-    def test_declares_its_inputs_as_required(self):
-        for name in ("model", "pr-number", "skill-path"):
-            self.assertRegex(self.text, rf"(?m)^  {name}:")
-
-    def test_hands_control_to_the_scripts(self):
-        for script in (
-            "sign-in.sh",
-            "check-provider-key.sh",
-            "setup-reviewer.sh",
-            "run-review.sh",
-        ):
-            self.assertIn(script, self.text)
 
 
 class ReviewerScripts(unittest.TestCase):
