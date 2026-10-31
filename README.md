@@ -44,7 +44,7 @@ precedence over the exchange and does not need `id-token: write`.
 | --------------- | -------- | ----------------------------------------------------------------------------- |
 | `model`         | yes      | OpenCode model in `provider/model` format, optionally `provider/model#variant` |
 | `skills-ref`    | yes      | Tag or commit of `AlvaroVFon/skills` that provides the skill                   |
-| `oidc-client-id` | no      | Console key id used for the OIDC exchange                                     |
+| `oidc-client-id` | no      | Console key id used for the OIDC exchange (defaults to the pull request scoped key) |
 
 Pin `skills-ref` to a tag or commit. `main` gives you the latest skill at the cost
 of reviews that change without any change in your repo.
@@ -57,9 +57,13 @@ of reviews that change without any change in your repo.
    - signs in to OpenCode with OIDC, or reuses the `OPENCODE_API_KEY` secret;
    - installs the skill in the OpenCode config directory, outside the caller repo;
    - installs reviewer policies: the review is read-only and can run `gh`, but
-     `git push`, `gh pr merge` and file edits are denied;
-   - runs `opencode run --standalone --auto` with a prompt that loads the skill.
-4. The skill publishes the review with `gh pr review`.
+     `git push`, `gh pr merge` and file edits are denied, and session sharing is
+     disabled so the transcript is never published;
+   - runs `opencode run --standalone --auto` with a prompt that loads the skill,
+     limits reading to the diff and the code it calls, and requires every finding
+     that can be anchored to a changed line to be posted as an inline comment in a
+     single review.
+4. The skill publishes the review with `gh api .../reviews`.
 
 A new push to the same pull request cancels the run in progress.
 

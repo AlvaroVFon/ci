@@ -15,7 +15,7 @@ on:
         description: "Client id shown by the Console for the GitHub Actions key; empty falls back to the secret"
         required: false
         type: string
-        default: "sk_231ca0f9-d379-478a-b097-9fa7df5efb48"
+        default: "sk_bfa81d64-af1d-4242-b093-5cefe33c6956"
     secrets:
       OPENCODE_API_KEY:
         required: false

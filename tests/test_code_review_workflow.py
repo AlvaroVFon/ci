@@ -113,7 +113,13 @@ class ReviewerScripts(unittest.TestCase):
         text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
         self.assertIn("opencode run --standalone --auto", text)
         self.assertIn("@opencode/cli@2", text)
-        self.assertIn("gh pr review", text)
+        self.assertIn("/pulls/${PR_NUMBER}/reviews", text)
+        self.assertIn("inline comment", text)
+        self.assertIn("Skip README", text)
+
+    def test_disables_session_sharing(self):
+        config = json.loads(PERMISSIONS.read_text(encoding="utf-8"))
+        self.assertEqual(config.get("share"), "disabled")
 
     def test_setup_installs_the_skill_and_the_policies(self):
         with tempfile.TemporaryDirectory() as tmp:
