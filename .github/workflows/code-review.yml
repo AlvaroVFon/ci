@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       skills-ref:
-        description: "Tag or commit of AlvaroVFon/skills that provides the code-review skill"
+        description: "Tag or commit of AlvaroVFon/skills that provides code-review and code-review-bot"
         required: true
         type: string
       ci-ref:
@@ -35,10 +35,11 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
       pull-requests: write
+      checks: write
       id-token: write
     concurrency:
       group: code-review-${{ github.repository }}-${{ github.event.pull_request.number }}
@@ -74,9 +75,10 @@ jobs:
       - name: Check OpenCode key
         run: bash .ci/scripts/check-provider-key.sh
 
-      - name: Install the skill and the reviewer policies
+      - name: Install the skills and the reviewer policies
         env:
           SKILL_PATH: .skills/skills/quality/code-review
+          BOT_SKILL_PATH: .skills/skills/quality/code-review-bot
         run: bash .ci/scripts/setup-reviewer.sh
 
       - name: Review pull request
@@ -85,6 +87,7 @@ jobs:
           MODEL: ${{ inputs.model }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           VERBOSE: ${{ inputs.verbose }}
+          TMPDIR: /tmp
         run: bash .ci/scripts/run-review.sh
 
       - name: Drop the checkouts

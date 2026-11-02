@@ -48,17 +48,23 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn("cancel-in-progress: true", flat)
         self.assertIn("github.event.pull_request.number", flat)
 
-    def test_grants_only_what_the_skill_needs(self):
+    def test_grants_only_what_the_skills_need(self):
         flat = self.flat()
         self.assertIn("contents: read", flat)
         self.assertIn("pull-requests: write", flat)
+        self.assertIn("checks: write", flat)
         self.assertIn("id-token: write", flat)
         self.assertNotIn("contents: write", flat)
 
-    def test_checks_out_the_skill_at_a_caller_pinned_ref(self):
+    def test_checks_out_the_skills_at_a_caller_pinned_ref(self):
         flat = self.flat()
         self.assertIn("repository: AlvaroVFon/skills", flat)
         self.assertIn("ref: ${{ inputs.skills-ref }}", flat)
+
+    def test_installs_the_bot_skill(self):
+        flat = self.flat()
+        self.assertIn("BOT_SKILL_PATH", flat)
+        self.assertIn("code-review-bot", flat)
 
     def test_pins_current_action_versions(self):
         self.assertIn("actions/checkout@v7", self.flat())
@@ -113,7 +119,12 @@ class CallerContract(unittest.TestCase):
         self.assertEqual(workflow_ref, scripts_ref)
 
     def test_grants_the_permissions_the_called_job_needs(self):
-        for permission in ("contents: read", "pull-requests: write", "id-token: write"):
+        for permission in (
+            "contents: read",
+            "pull-requests: write",
+            "checks: write",
+            "id-token: write",
+        ):
             with self.subTest(permission=permission):
                 self.assertIn(permission, self.caller)
 
@@ -190,6 +201,49 @@ class ReviewerScripts(unittest.TestCase):
         self.assertIn("${published:-0}", text)
         self.assertIn('exit 0', text)
 
+    def test_run_review_uses_the_bot_skill_and_report(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        for snippet in (
+            "code-review-bot",
+            "code-review-report.json",
+            "code-review-input.json",
+            "prepare_review.py",
+            "validate_review_report.py",
+            "<!-- ai-review -->",
+            "Never approve",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, text)
+
+    def test_run_review_rechecks_the_head_after_the_agent(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        after_agent = text.split("opencode run", 1)[1]
+        self.assertIn('gh api "$api" --jq .head.sha', after_agent)
+
+    def test_run_review_posts_the_check_run_it_verifies(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        for snippet in (
+            "code-review-check.json",
+            "check-runs",
+            "--method POST",
+            "check_run_enabled",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, text)
+        self.assertIn("check_run", text)
+
+    def test_run_review_does_not_mix_slurp_with_jq(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"--slurp\s+--jq")
+
+    def test_run_review_rejects_stale_or_approved_reviews(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertIn('"$stale" == "true"', text)
+        self.assertIn('"$dry_run" == "true"', text)
+        self.assertIn("${approved:-0}", text)
+        self.assertIn('"$verdict" == "blocking"', text)
+        self.assertIn('"$blocking_gate" == "true"', text)
+
     def test_setup_installs_the_skill_and_the_policies(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill = pathlib.Path(tmp) / "code-review"
@@ -206,6 +260,47 @@ class ReviewerScripts(unittest.TestCase):
             self.assertTrue(installed.is_file())
             policies = json.loads((config / "opencode" / "opencode.json").read_text())
             self.assertIn("permissions", policies)
+
+    def test_setup_installs_the_bot_skill_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            review = root / "code-review"
+            bot = root / "code-review-bot"
+            review.mkdir()
+            (review / "SKILL.md").write_text("---\nname: code-review\n---\n")
+            (bot / "assets").mkdir(parents=True)
+            (bot / "SKILL.md").write_text("---\nname: code-review-bot\n---\n")
+            (bot / "assets" / "prepare_review.py").write_text("# prepare\n")
+            (bot / "assets" / "validate_review_report.py").write_text("# validate\n")
+            config = root / "config"
+            result = self.run_script(
+                "setup-reviewer.sh",
+                SKILL_PATH=str(review),
+                BOT_SKILL_PATH=str(bot),
+                XDG_CONFIG_HOME=str(config),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            installed = config / "opencode" / "skills" / "code-review-bot"
+            self.assertTrue((installed / "SKILL.md").is_file())
+            self.assertTrue((installed / "assets" / "prepare_review.py").is_file())
+
+    def test_setup_rejects_a_bot_without_its_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            review = root / "code-review"
+            bot = root / "code-review-bot"
+            review.mkdir()
+            bot.mkdir()
+            (review / "SKILL.md").write_text("---\nname: code-review\n---\n")
+            (bot / "SKILL.md").write_text("---\nname: code-review-bot\n---\n")
+            result = self.run_script(
+                "setup-reviewer.sh",
+                SKILL_PATH=str(review),
+                BOT_SKILL_PATH=str(bot),
+                XDG_CONFIG_HOME=str(root / "config"),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("report assets", result.stdout + result.stderr)
 
     def test_setup_rejects_a_path_without_the_skill(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -261,12 +356,131 @@ class ReviewerScripts(unittest.TestCase):
         self.assertIn("error_description", text)
         self.assertIn("GITHUB_REPOSITORY", text)
 
-    def test_permissions_deny_mutations(self):
+    def test_permissions_deny_mutations_and_approval(self):
         rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]
         denied = {(r["action"], r["resource"]) for r in rules if r["effect"] == "deny"}
-        self.assertIn(("shell", "git push*"), denied)
-        self.assertIn(("shell", "gh pr merge*"), denied)
-        self.assertIn(("edit", "*"), denied)
+        for rule in (
+            ("shell", "git push*"),
+            ("shell", "git commit *"),
+            ("shell", "git rebase*"),
+            ("shell", "git merge *"),
+            ("shell", "git tag -d*"),
+            ("shell", "gh pr merge*"),
+            ("shell", "gh pr review*"),
+            ("edit", "*"),
+        ):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, denied)
+
+    def test_permissions_keep_read_only_git_commands_available(self):
+        rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]
+        denied = {r["resource"] for r in rules if r["effect"] == "deny"}
+        for overbroad in ("git merge*", "git tag*"):
+            with self.subTest(rule=overbroad):
+                self.assertNotIn(overbroad, denied)
+
+
+class RunReviewIntegration(unittest.TestCase):
+    """Run the script against stubbed gh/opencode/npm binaries.
+
+    The stub for `gh` rejects `--slurp` combined with `--jq`, which is the exact
+    failure the real CLI reports. Nothing here touches the network.
+    """
+
+    SHA = "a" * 40
+
+    def write_executable(self, path, body):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+
+    def test_publishes_and_posts_the_check_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bin_dir = root / "bin"
+            config = root / "config"
+            reports = root / "reports"
+            bot = config / "opencode" / "skills" / "code-review-bot"
+            (bot / "assets").mkdir(parents=True)
+            (bot / "SKILL.md").write_text("---\nname: code-review-bot\n---\n")
+            (bot / "assets" / "validate_review_report.py").write_text(
+                "import sys\nsys.exit(0)\n"
+            )
+            gh_log = root / "gh.log"
+
+            report = {
+                "verdict": "clean",
+                "policy": {"blocking_gate": False},
+                "head_sha": self.SHA,
+                "stale": False,
+                "dry_run": False,
+            }
+            payload = {
+                "commit_id": self.SHA,
+                "event": "COMMENT",
+                "body": "<!-- ai-review -->",
+                "comments": [],
+            }
+
+            self.write_executable(
+                bin_dir / "npm",
+                "#!/usr/bin/env bash\nexit 0\n",
+            )
+            self.write_executable(
+                bin_dir / "opencode",
+                "#!/usr/bin/env bash\n"
+                'mkdir -p "$TMPDIR/opencode"\n'
+                f"printf '%s' '{json.dumps(report)}' > \"$TMPDIR/opencode/code-review-report.json\"\n"
+                f"printf '%s' '{json.dumps({'config': {'check_run': True}})}' > \"$TMPDIR/opencode/code-review-input.json\"\n"
+                f"printf '%s' '{json.dumps(payload)}' > \"$TMPDIR/opencode/code-review-payload.json\"\n"
+                f"printf '%s' '{json.dumps({'name': 'AI review'})}' > \"$TMPDIR/opencode/code-review-check.json\"\n"
+                "exit 0\n",
+            )
+            self.write_executable(
+                bin_dir / "gh",
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f'log="{gh_log}"\n'
+                "printf '%s\\n' \"$*\" >> \"$log\"\n"
+                'if [[ "$1" == "api" ]]; then shift; fi\n'
+                "slurp=false\n"
+                "jq=false\n"
+                'for arg in "$@"; do\n'
+                '  if [[ "$arg" == "--slurp" ]]; then slurp=true; fi\n'
+                '  if [[ "$arg" == "--jq" ]]; then jq=true; fi\n'
+                "done\n"
+                'if [[ "$slurp" == true && "$jq" == true ]]; then\n'
+                '  echo "the --slurp option is not supported with --jq or --template" >&2\n'
+                "  exit 1\n"
+                "fi\n"
+                'case "$*" in\n'
+                f'  *"/pulls/12 --jq .head.sha"*) printf \'%s\\n\' "{self.SHA}" ;;\n'
+                '  *"/pulls/12 --jq .merged"*) printf \'false\\n\' ;;\n'
+                f'  *"/pulls/12/reviews --paginate --slurp"*) printf \'[[{{"commit_id":"{self.SHA}","state":"COMMENTED","body":"<!-- ai-review -->"}}]]\\n\' ;;\n'
+                '  *"/check-runs --method POST"*) printf \'https://github.com/o/r/runs/1\\n\' ;;\n'
+                '  *) echo "unexpected gh call: $*" >&2; exit 1 ;;\n'
+                "esac\n",
+            )
+
+            env = {
+                **os.environ,
+                "MODEL": "test/model",
+                "PR_NUMBER": "12",
+                "GITHUB_REPOSITORY": "o/r",
+                "XDG_CONFIG_HOME": str(config),
+                "TMPDIR": str(reports),
+                "RUNNER_TEMP": str(root),
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            }
+            result = subprocess.run(
+                ["bash", str(SCRIPTS / "run-review.sh")],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Posted the AI review check run", result.stdout)
+            self.assertIn("check-runs", gh_log.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
