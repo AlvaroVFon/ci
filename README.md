@@ -77,15 +77,15 @@ of reviews that change without any change in your repo.
      session sharing is disabled so the transcript is never published;
    - `run-review.sh` installs the CLI and runs the agent with a prompt that limits
      reading to the diff and the code it calls. The agent writes a
-     `code-review-report.json` and a review payload, validates the report, then
-     publishes one review with `gh api .../reviews`.
-4. The agent posts the inline comments and file-level fallbacks from the payload,
-   and creates the `AI review` check run when the repository enables it. It never
-   approves and never merges.
-5. `run-review.sh` validates the report again, requires the `<!-- ai-review -->`
-   marker on a review for the current head SHA, rejects an approval, and fails the
-   job when the report is stale or when `blocking_gate` is enabled and the verdict
-   is blocking.
+     `code-review-report.json`, a review payload and a check payload, validates
+     the report, then publishes one review with `gh api .../reviews`.
+4. The agent posts the inline comments and file-level fallbacks from the payload.
+   It never approves and never merges.
+5. `run-review.sh` re-reads the head, validates the report again, requires the
+   `<!-- ai-review -->` marker on a review for the current head SHA, rejects an
+   approval, and posts the `AI review` check run from the helper's check payload
+   when `check_run` is enabled. It fails the job when the report is stale or when
+   `blocking_gate` is enabled and the verdict is blocking.
 
 A new push to the same pull request cancels the run in progress.
 

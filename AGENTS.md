@@ -85,9 +85,11 @@ tag exists, so the PR's own review never points at an unpublished workflow.
   the runner's OIDC token and masks it with `::add-mask::`.
 - `run-review.sh` installs `@opencode/cli@2` globally and publishes through
   `gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews`. After the agent it
-  validates the report with `code-review-bot/assets/validate_review_report.py`,
-  checks the head SHA, rejects stale/dry-run/approved reports, and fails the job
-  when `blocking_gate` is enabled and the verdict is blocking.
+  re-reads the head SHA (the bot may restart once when the head moves), validates
+  the report with `code-review-bot/assets/validate_review_report.py`, rejects
+  stale/dry-run/approved reports, posts the `AI review` check run from the
+  helper's check payload when `check_run` is enabled, and fails the job when
+  `blocking_gate` is enabled and the verdict is blocking.
 
 ## Contract tests are source-text assertions
 

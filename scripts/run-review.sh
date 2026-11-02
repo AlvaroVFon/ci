@@ -9,13 +9,15 @@ set -euo pipefail
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
 api="repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
-head_sha="$(gh api "$api" --jq .head.sha)"
 
 config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 bot_dir="$config/skills/code-review-bot"
 validator="$bot_dir/assets/validate_review_report.py"
 report_dir="${TMPDIR:-/tmp}/opencode"
 report="$report_dir/code-review-report.json"
+input="$report_dir/code-review-input.json"
+payload="$report_dir/code-review-payload.json"
+check_payload="$report_dir/code-review-check.json"
 log="${RUNNER_TEMP:-/tmp}/opencode-review.log"
 
 if [[ ! -f "$bot_dir/SKILL.md" ]]; then
@@ -39,16 +41,14 @@ Scope: the diff against the base branch. Read only the files the diff touches an
 
 Collect the changed files with their patches from gh api ${api}/files --paginate and read .ai-review.yml from the base SHA. Do not use gh pr diff to decide anchors.
 
-Write the input to ${report_dir}/code-review-input.json, then run:
-python3 ${bot_dir}/assets/prepare_review.py --input ${report_dir}/code-review-input.json --report ${report} --payload ${report_dir}/code-review-payload.json --check-payload ${report_dir}/code-review-check.json
+Write the input to ${input}, then run:
+python3 ${bot_dir}/assets/prepare_review.py --input ${input} --report ${report} --payload ${payload} --check-payload ${check_payload}
 
-Publish the review in a single gh api call to ${api}/reviews with:
-- commit_id: ${head_sha};
-- event and body from the payload;
-- one inline comment per finding the helper marks inline, plus the file-level fallbacks; the body carries the summary and every finding that cannot be anchored. Post at most one inline comment per finding, never one review per finding;
-- keep the <!-- ai-review --> marker from the payload body.
+Publish the review in a single gh api call to ${api}/reviews with --input ${payload} when the payload exists. The payload carries commit_id, event, body and one inline comment per finding the helper marks inline, plus the file-level fallbacks; the body carries the summary and every finding that cannot be anchored. Post at most one inline comment per finding, never one review per finding. Keep the <!-- ai-review --> marker from the payload body.
 
-Create the check run from ${report_dir}/code-review-check.json with gh api repos/${GITHUB_REPOSITORY}/check-runs when configured.
+For a skipped or error verdict the helper writes no payload: write the report, do not post a review and stop.
+
+Do not create the check run yourself; run-review.sh posts ${check_payload} after the review.
 
 Never approve. Never merge. Do not edit files, commit, push or run linters, typechecks or tests.
 
@@ -63,11 +63,50 @@ else
   opencode run --standalone --auto --model "$MODEL" "$prompt" >"$log" 2>&1 || status=$?
 fi
 
+# code-review-bot restarts once when the head moves and then reports the new
+# SHA. Re-read it so the report and the published review are compared against
+# the current head, not the event's stale capture.
+head_sha="$(gh api "$api" --jq .head.sha)"
+
 fail() {
   echo "::error::$1"
   echo "Last 10 lines of the agent transcript:"
   tail -n 10 "$log"
   exit 1
+}
+
+check_run_enabled() {
+  if [[ ! -f "$input" ]]; then
+    return 0
+  fi
+  python3 - "$input" <<'PY'
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+config = data.get("config") if isinstance(data, dict) else None
+value = config.get("check_run", True) if isinstance(config, dict) else True
+raise SystemExit(0 if value is not False else 1)
+PY
+}
+
+post_check() {
+  if ! check_run_enabled; then
+    echo "check_run is disabled in .ai-review.yml; skipping the AI review check run."
+    return 0
+  fi
+  if [[ ! -f "$check_payload" ]]; then
+    return 1
+  fi
+  local url
+  if ! url="$(gh api "repos/${GITHUB_REPOSITORY}/check-runs" --method POST --input "$check_payload" --jq .html_url)"; then
+    echo "::error::Failed to create the AI review check run."
+    return 1
+  fi
+  echo "Posted the AI review check run: ${url}"
 }
 
 if [[ ! -f "$report" ]]; then
@@ -103,18 +142,8 @@ if [[ "$dry_run" == "true" ]]; then
   fail "The report is a dry run; the review was not published."
 fi
 
-if [[ "$(gh api "$api" --jq .merged)" == "true" ]]; then
-  fail "The pull request is already merged; no review should be published."
-fi
-
-published="$(gh api "$api/reviews" --paginate --slurp --jq "(add // []) | [.[] | select(.commit_id == \"${head_sha}\" and ((.body // \"\") | contains(\"<!-- ai-review -->\")))] | length")"
-approved="$(gh api "$api/reviews" --paginate --slurp --jq "(add // []) | [.[] | select(.commit_id == \"${head_sha}\" and .state == \"APPROVED\" and ((.body // \"\") | contains(\"<!-- ai-review -->\")))] | length")"
-
-if [[ "${approved:-0}" -gt 0 ]]; then
-  fail "The bot posted an APPROVE review; code-review-bot must never approve."
-fi
-
 if [[ "$verdict" == "skipped" ]]; then
+  post_check || echo "::warning::The AI review check run was not created for a skipped review."
   reason="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("skip_reason") or "")' "$report")"
   if [[ $status -ne 0 ]]; then
     echo "::warning::OpenCode exited with status $status on a skipped review."
@@ -124,12 +153,30 @@ if [[ "$verdict" == "skipped" ]]; then
 fi
 
 if [[ "$verdict" == "error" ]]; then
+  post_check || true
   errors="$(python3 -c 'import json,sys; print("; ".join(json.load(open(sys.argv[1])).get("errors") or []))' "$report")"
   fail "The review failed: ${errors}"
 fi
 
+if [[ "$(gh api "$api" --jq .merged)" == "true" ]]; then
+  fail "The pull request is already merged; no review should be published."
+fi
+
+# gh api rejects --slurp combined with --jq, so paginate into one array and
+# filter with jq in a separate step.
+published="$(gh api "$api/reviews" --paginate --slurp | jq -r "(add // []) | [.[] | select(.commit_id == \"${head_sha}\" and ((.body // \"\") | contains(\"<!-- ai-review -->\")))] | length")"
+approved="$(gh api "$api/reviews" --paginate --slurp | jq -r "(add // []) | [.[] | select(.commit_id == \"${head_sha}\" and .state == \"APPROVED\" and ((.body // \"\") | contains(\"<!-- ai-review -->\")))] | length")"
+
+if [[ "${approved:-0}" -gt 0 ]]; then
+  fail "The bot posted an APPROVE review; code-review-bot must never approve."
+fi
+
 if [[ "${published:-0}" -eq 0 ]]; then
   fail "No AI review published for ${head_sha} (OpenCode exited with status ${status})."
+fi
+
+if ! post_check; then
+  fail "No AI review check run was created (expected ${check_payload})."
 fi
 
 if [[ $status -ne 0 ]]; then

@@ -9,6 +9,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      checks: write
       id-token: write
     uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v6
     with:

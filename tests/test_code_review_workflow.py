@@ -119,7 +119,12 @@ class CallerContract(unittest.TestCase):
         self.assertEqual(workflow_ref, scripts_ref)
 
     def test_grants_the_permissions_the_called_job_needs(self):
-        for permission in ("contents: read", "pull-requests: write", "id-token: write"):
+        for permission in (
+            "contents: read",
+            "pull-requests: write",
+            "checks: write",
+            "id-token: write",
+        ):
             with self.subTest(permission=permission):
                 self.assertIn(permission, self.caller)
 
@@ -201,6 +206,7 @@ class ReviewerScripts(unittest.TestCase):
         for snippet in (
             "code-review-bot",
             "code-review-report.json",
+            "code-review-input.json",
             "prepare_review.py",
             "validate_review_report.py",
             "<!-- ai-review -->",
@@ -208,6 +214,27 @@ class ReviewerScripts(unittest.TestCase):
         ):
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, text)
+
+    def test_run_review_rechecks_the_head_after_the_agent(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        after_agent = text.split("opencode run", 1)[1]
+        self.assertIn('gh api "$api" --jq .head.sha', after_agent)
+
+    def test_run_review_posts_the_check_run_it_verifies(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        for snippet in (
+            "code-review-check.json",
+            "check-runs",
+            "--method POST",
+            "check_run_enabled",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, text)
+        self.assertIn("check_run", text)
+
+    def test_run_review_does_not_mix_slurp_with_jq(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"--slurp\s+--jq")
 
     def test_run_review_rejects_stale_or_approved_reviews(self):
         text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
@@ -334,15 +361,126 @@ class ReviewerScripts(unittest.TestCase):
         denied = {(r["action"], r["resource"]) for r in rules if r["effect"] == "deny"}
         for rule in (
             ("shell", "git push*"),
-            ("shell", "git commit*"),
+            ("shell", "git commit *"),
             ("shell", "git rebase*"),
-            ("shell", "git merge*"),
+            ("shell", "git merge *"),
+            ("shell", "git tag -d*"),
             ("shell", "gh pr merge*"),
             ("shell", "gh pr review*"),
             ("edit", "*"),
         ):
             with self.subTest(rule=rule):
                 self.assertIn(rule, denied)
+
+    def test_permissions_keep_read_only_git_commands_available(self):
+        rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]
+        denied = {r["resource"] for r in rules if r["effect"] == "deny"}
+        for overbroad in ("git merge*", "git tag*"):
+            with self.subTest(rule=overbroad):
+                self.assertNotIn(overbroad, denied)
+
+
+class RunReviewIntegration(unittest.TestCase):
+    """Run the script against stubbed gh/opencode/npm binaries.
+
+    The stub for `gh` rejects `--slurp` combined with `--jq`, which is the exact
+    failure the real CLI reports. Nothing here touches the network.
+    """
+
+    SHA = "a" * 40
+
+    def write_executable(self, path, body):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+
+    def test_publishes_and_posts_the_check_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bin_dir = root / "bin"
+            config = root / "config"
+            reports = root / "reports"
+            bot = config / "opencode" / "skills" / "code-review-bot"
+            (bot / "assets").mkdir(parents=True)
+            (bot / "SKILL.md").write_text("---\nname: code-review-bot\n---\n")
+            (bot / "assets" / "validate_review_report.py").write_text(
+                "import sys\nsys.exit(0)\n"
+            )
+            gh_log = root / "gh.log"
+
+            report = {
+                "verdict": "clean",
+                "policy": {"blocking_gate": False},
+                "head_sha": self.SHA,
+                "stale": False,
+                "dry_run": False,
+            }
+            payload = {
+                "commit_id": self.SHA,
+                "event": "COMMENT",
+                "body": "<!-- ai-review -->",
+                "comments": [],
+            }
+
+            self.write_executable(
+                bin_dir / "npm",
+                "#!/usr/bin/env bash\nexit 0\n",
+            )
+            self.write_executable(
+                bin_dir / "opencode",
+                "#!/usr/bin/env bash\n"
+                'mkdir -p "$TMPDIR/opencode"\n'
+                f"printf '%s' '{json.dumps(report)}' > \"$TMPDIR/opencode/code-review-report.json\"\n"
+                f"printf '%s' '{json.dumps({'config': {'check_run': True}})}' > \"$TMPDIR/opencode/code-review-input.json\"\n"
+                f"printf '%s' '{json.dumps(payload)}' > \"$TMPDIR/opencode/code-review-payload.json\"\n"
+                f"printf '%s' '{json.dumps({'name': 'AI review'})}' > \"$TMPDIR/opencode/code-review-check.json\"\n"
+                "exit 0\n",
+            )
+            self.write_executable(
+                bin_dir / "gh",
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f'log="{gh_log}"\n'
+                "printf '%s\\n' \"$*\" >> \"$log\"\n"
+                'if [[ "$1" == "api" ]]; then shift; fi\n'
+                "slurp=false\n"
+                "jq=false\n"
+                'for arg in "$@"; do\n'
+                '  if [[ "$arg" == "--slurp" ]]; then slurp=true; fi\n'
+                '  if [[ "$arg" == "--jq" ]]; then jq=true; fi\n'
+                "done\n"
+                'if [[ "$slurp" == true && "$jq" == true ]]; then\n'
+                '  echo "the --slurp option is not supported with --jq or --template" >&2\n'
+                "  exit 1\n"
+                "fi\n"
+                'case "$*" in\n'
+                f'  *"/pulls/12 --jq .head.sha"*) printf \'%s\\n\' "{self.SHA}" ;;\n'
+                '  *"/pulls/12 --jq .merged"*) printf \'false\\n\' ;;\n'
+                f'  *"/pulls/12/reviews --paginate --slurp"*) printf \'[[{{"commit_id":"{self.SHA}","state":"COMMENTED","body":"<!-- ai-review -->"}}]]\\n\' ;;\n'
+                '  *"/check-runs --method POST"*) printf \'https://github.com/o/r/runs/1\\n\' ;;\n'
+                '  *) echo "unexpected gh call: $*" >&2; exit 1 ;;\n'
+                "esac\n",
+            )
+
+            env = {
+                **os.environ,
+                "MODEL": "test/model",
+                "PR_NUMBER": "12",
+                "GITHUB_REPOSITORY": "o/r",
+                "XDG_CONFIG_HOME": str(config),
+                "TMPDIR": str(reports),
+                "RUNNER_TEMP": str(root),
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            }
+            result = subprocess.run(
+                ["bash", str(SCRIPTS / "run-review.sh")],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Posted the AI review check run", result.stdout)
+            self.assertIn("check-runs", gh_log.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
