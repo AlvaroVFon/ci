@@ -64,7 +64,7 @@
     { "action": "shell", "resource": "ssh*", "effect": "deny" },
     { "action": "shell", "resource": "scp*", "effect": "deny" },
     { "action": "shell", "resource": "rsync*", "effect": "deny" },
-    { "action": "shell", "resource": "env", "effect": "deny" },
+    { "action": "shell", "resource": "env *", "effect": "deny" },
     { "action": "shell", "resource": "printenv*", "effect": "deny" },
     { "action": "shell", "resource": "gh auth*", "effect": "deny" },
     { "action": "shell", "resource": "docker*", "effect": "deny" },

@@ -392,6 +392,7 @@ class ReviewerScripts(unittest.TestCase):
             ("shell", "gh pr review*"),
             ("shell", "curl*"),
             ("shell", "wget*"),
+            ("shell", "env *"),
             ("shell", "gh auth*"),
             ("edit", "*"),
             ("read", "*.env"),
