@@ -29,7 +29,8 @@ jobs:
     uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v7
     with:
       model: opencode-go/deepseek-v4.1-flash
-      skills-ref: main
+      # Tag or commit of AlvaroVFon/skills with code-review and code-review-bot.
+      skills-ref: <skills-tag-or-commit>
       ci-ref: v7
       oidc-client-id: sk_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
@@ -73,18 +74,21 @@ of reviews that change without any change in your repo.
    - `setup-reviewer.sh` installs `code-review` and `code-review-bot` in the
      OpenCode config directory, outside the caller repo, together with the
      reviewer policies: the review is read-only, `git push`, `git commit`,
-     `git rebase`, `gh pr merge`, `gh pr review` and file edits are denied, and
-     session sharing is disabled so the transcript is never published;
+     `git rebase`, `gh pr merge`, `gh pr review`, file edits, `.env` reads
+     through the read tool, web fetch/search and common exfiltration commands
+     are denied, and session sharing is disabled so the transcript is never
+     published;
    - `run-review.sh` installs the CLI and runs the agent with a prompt that limits
      reading to the diff and the code it calls. The agent writes a
      `code-review-report.json`, a review payload and a check payload, validates
      the report, then publishes one review with `gh api .../reviews`.
 4. The agent posts the inline comments and file-level fallbacks from the payload.
    It never approves and never merges.
-5. `run-review.sh` re-reads the head, validates the report again, requires the
-   `<!-- ai-review -->` marker on a review for the current head SHA, rejects an
-   approval, and posts the `AI review` check run from the helper's check payload
-   when `check_run` is enabled. It fails the job when the report is stale or when
+5. `run-review.sh` re-reads the head and state, validates the report again,
+   requires the `<!-- ai-review -->` marker on a review for the current head SHA,
+   rejects an approval, sanitizes the check-run annotations against the checkout,
+   and posts the `AI review` check run from the helper's check payload when
+   `check_run` is enabled. It fails the job when the report is stale or when
    `blocking_gate` is enabled and the verdict is blocking.
 
 A new push to the same pull request cancels the run in progress.
@@ -135,9 +139,12 @@ project at once. `ci-ref` must carry the same value as the `uses:` ref; a contra
 test in `tests/` fails when they diverge. `skills-ref` must point to a `skills`
 release that contains both `code-review` and `code-review-bot`.
 
-The feature PR that introduces `v7` keeps `review.yml` on `v6` so its own review
-uses the last released workflow. After merging, tag `v7` and bump `review.yml`,
-`ci-ref` and the pinned test to `v7` in a release commit.
+The feature PR that introduces `v8` keeps `review.yml` on `v7` so its own review
+uses the last released workflow. After merging, tag `v8` and bump `review.yml`
+(`uses` and `ci-ref`), the pinned test and this README to `v8` in a release
+commit. In that same commit, keep `skills-ref` on a `skills` tag or commit that
+contains both `code-review` and `code-review-bot`; a ref from before the bot
+existed fails when `setup-reviewer.sh` cannot find `BOT_SKILL_PATH`.
 
 ### Logs
 
@@ -172,6 +179,10 @@ that content is already visible to whoever can read the repository.
   the client id changes, the job fails at sign-in.
 - The bot reads `.ai-review.yml` from the base SHA. A pull request cannot change the
   policy that judges it.
+- The reviewer policy denies `.env` reads through the read tool, web fetch/search
+  and common exfiltration commands, but shell and grep still run with runner
+  privileges and grep is not path-restricted. Treat it as defense in depth, not
+  a sandbox.
 
 ## Local verification
 

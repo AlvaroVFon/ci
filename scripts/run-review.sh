@@ -12,6 +12,7 @@ api="repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
 
 config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 bot_dir="$config/skills/code-review-bot"
+prepare="$bot_dir/assets/prepare_review.py"
 validator="$bot_dir/assets/validate_review_report.py"
 report_dir="${TMPDIR:-/tmp}/opencode"
 report="$report_dir/code-review-report.json"
@@ -24,12 +25,19 @@ if [[ ! -f "$bot_dir/SKILL.md" ]]; then
   echo "::error::code-review-bot is not installed at $bot_dir"
   exit 1
 fi
+if [[ ! -f "$prepare" ]]; then
+  echo "::error::code-review-bot is missing $prepare"
+  exit 1
+fi
 if [[ ! -f "$validator" ]]; then
   echo "::error::code-review-bot is missing $validator"
   exit 1
 fi
 
+# The report directory can survive a reused runner or a retry. Drop the
+# artifacts so a previous run cannot satisfy the checks below.
 mkdir -p "$report_dir"
+rm -f "$report" "$input" "$payload" "$check_payload" "$check_payload.tmp"
 npm install --global @opencode/cli@2 >/dev/null 2>&1
 
 prompt="$(cat <<EOF
@@ -93,12 +101,114 @@ raise SystemExit(0 if value is not False else 1)
 PY
 }
 
+# GitHub validates annotations against the report head SHA, not the merge
+# checkout. Resolve each path at head_sha and drop annotations whose lines do
+# not exist there; otherwise one bad annotation can reject the whole check run.
+sanitize_check_payload() {
+  python3 - "$check_payload" "$PWD" "$head_sha" "$GITHUB_REPOSITORY" <<'PY'
+import base64
+import binascii
+import json
+import os
+import subprocess
+import sys
+
+path, root, head_sha, repo = sys.argv[1:5]
+
+def count_lines(data):
+    return data.count(b"\n") + (0 if data.endswith(b"\n") or not data else 1)
+
+cache = {}
+
+def file_lines(relative):
+    if relative in cache:
+        return cache[relative]
+    cache[relative] = None
+    result = subprocess.run(
+        ["git", "show", f"{head_sha}:{relative}"],
+        cwd=root,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        cache[relative] = count_lines(result.stdout)
+        return cache[relative]
+    result = subprocess.run(
+        [
+            "gh",
+            "api",
+            "-X",
+            "GET",
+            f"repos/{repo}/contents/{relative}",
+            "-f",
+            f"ref={head_sha}",
+            "--jq",
+            ".content",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        data = base64.b64decode(result.stdout)
+    except (binascii.Error, ValueError):
+        return None
+    cache[relative] = count_lines(data)
+    return cache[relative]
+
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+output = payload.get("output")
+if isinstance(output, dict) and isinstance(output.get("annotations"), list):
+    kept = []
+    for annotation in output["annotations"]:
+        if not isinstance(annotation, dict):
+            continue
+        relative = annotation.get("path")
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or relative.startswith("/")
+            or ".." in relative.split("/")
+        ):
+            continue
+        lines = file_lines(relative)
+        if lines is None:
+            continue
+        start = annotation.get("start_line")
+        end = annotation.get("end_line", start)
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start < 1
+            or end < start
+            or end > lines
+        ):
+            continue
+        kept.append(annotation)
+    dropped = len(output["annotations"]) - len(kept)
+    if dropped:
+        print(f"Dropped {dropped} invalid check annotation(s).")
+    output["annotations"] = kept
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+os.replace(tmp, path)
+PY
+}
+
 post_check() {
   if ! check_run_enabled; then
     echo "check_run is disabled in .ai-review.yml; skipping the AI review check run."
     return 0
   fi
   if [[ ! -f "$check_payload" ]]; then
+    return 1
+  fi
+  if ! sanitize_check_payload; then
+    echo "::error::Could not sanitize the AI review check payload."
     return 1
   fi
   local url
@@ -158,8 +268,9 @@ if [[ "$verdict" == "error" ]]; then
   fail "The review failed: ${errors}"
 fi
 
-if [[ "$(gh api "$api" --jq .merged)" == "true" ]]; then
-  fail "The pull request is already merged; no review should be published."
+pr_state="$(gh api "$api" --jq .state)"
+if [[ "$pr_state" != "open" ]]; then
+  fail "The pull request is ${pr_state}; no review should be published."
 fi
 
 # gh api rejects --slurp combined with --jq, so paginate into one array and

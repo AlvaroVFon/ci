@@ -55,6 +55,9 @@ tag exists, so the PR's own review never points at an unpublished workflow.
 - `run-review.sh` writes and validates
   `${TMPDIR:-/tmp}/opencode/code-review-report.json`. The workflow sets
   `TMPDIR: /tmp` so the report lands where the reviewer permissions allow edits.
+  It clears the report/payload/check artifacts before running, so a reused runner
+  or a retry cannot satisfy the checks with a previous run's output, and it
+  refuses to accept a review once the pull request is no longer open.
 - The success check is a report for the current head SHA plus a review carrying
   the `<!-- ai-review -->` marker. Do not go back to "any review exists": a human
   review or a previous bot review would satisfy that.
@@ -79,8 +82,11 @@ tag exists, so the PR's own review never points at an unpublished workflow.
   without `assets/prepare_review.py` and `assets/validate_review_report.py`, and
   copies `reviewer-permissions.json` to `opencode.json`.
 - That permissions file intentionally disables sharing and subagents, denies all
-  edits/commits/pushes/merges, and allows edits only under `/tmp`. Do not relax
-  these to make a review "work".
+  edits/commits/pushes/merges, and allows edits only under `/tmp`. Its `read`
+  rules deny `.env` and runner-temp files, and it denies web fetch/search and
+  common exfiltration commands. Do not relax these to make a review "work";
+  shell and grep still run with runner privileges (grep is pattern-scoped, not
+  path-restricted), so this is defense in depth, not a sandbox.
 - `sign-in.sh` prefers a static `OPENCODE_API_KEY` secret; otherwise it exchanges
   the runner's OIDC token and masks it with `::add-mask::`.
 - `run-review.sh` installs `@opencode/cli@2` globally and publishes through
@@ -89,7 +95,9 @@ tag exists, so the PR's own review never points at an unpublished workflow.
   the report with `code-review-bot/assets/validate_review_report.py`, rejects
   stale/dry-run/approved reports, posts the `AI review` check run from the
   helper's check payload when `check_run` is enabled, and fails the job when
-  `blocking_gate` is enabled and the verdict is blocking.
+  `blocking_gate` is enabled and the verdict is blocking. Before posting, it
+  drops check annotations whose path or line range is not in the caller
+  checkout; GitHub can reject the whole check run otherwise.
 
 ## Contract tests are source-text assertions
 
