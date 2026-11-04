@@ -11,11 +11,12 @@ jobs:
       pull-requests: write
       checks: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v6
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v7
     with:
       model: opencode-go/deepseek-v4.1-flash
-      skills-ref: 15b5fd22917f57919ced83c99d44343bdc04d148
-      ci-ref: v6
+      # Skills main with the bot and the check-annotation fix.
+      skills-ref: 475c24630e53e23438afd6551ab36aa5dcb7ce73
+      ci-ref: v7
       oidc-client-id: sk_bfa81d64-af1d-4242-b093-5cefe33c6956
     secrets:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

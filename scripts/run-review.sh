@@ -12,6 +12,7 @@ api="repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
 
 config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 bot_dir="$config/skills/code-review-bot"
+prepare="$bot_dir/assets/prepare_review.py"
 validator="$bot_dir/assets/validate_review_report.py"
 report_dir="${TMPDIR:-/tmp}/opencode"
 report="$report_dir/code-review-report.json"
@@ -24,12 +25,19 @@ if [[ ! -f "$bot_dir/SKILL.md" ]]; then
   echo "::error::code-review-bot is not installed at $bot_dir"
   exit 1
 fi
+if [[ ! -f "$prepare" ]]; then
+  echo "::error::code-review-bot is missing $prepare"
+  exit 1
+fi
 if [[ ! -f "$validator" ]]; then
   echo "::error::code-review-bot is missing $validator"
   exit 1
 fi
 
+# The report directory can survive a reused runner or a retry. Drop the
+# artifacts so a previous run cannot satisfy the checks below.
 mkdir -p "$report_dir"
+rm -f "$report" "$input" "$payload" "$check_payload" "$check_payload.tmp"
 npm install --global @opencode/cli@2 >/dev/null 2>&1
 
 prompt="$(cat <<EOF
@@ -93,12 +101,69 @@ raise SystemExit(0 if value is not False else 1)
 PY
 }
 
+# The bot helper can annotate file/summary findings at a line that is not in
+# the checked-out file. GitHub may reject the whole check run, so keep only
+# annotations whose path and line range exist in the caller checkout.
+sanitize_check_payload() {
+  python3 - "$check_payload" "$PWD" <<'PY'
+import json
+import os
+import sys
+
+path, root = sys.argv[1], os.path.realpath(sys.argv[2])
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+output = payload.get("output")
+if isinstance(output, dict) and isinstance(output.get("annotations"), list):
+    kept = []
+    for annotation in output["annotations"]:
+        if not isinstance(annotation, dict):
+            continue
+        relative = annotation.get("path")
+        if not isinstance(relative, str) or not relative:
+            continue
+        target = os.path.realpath(os.path.join(root, relative))
+        if not target.startswith(root + os.sep) or not os.path.isfile(target):
+            continue
+        try:
+            with open(target, "rb") as handle:
+                lines = sum(1 for _ in handle)
+        except OSError:
+            continue
+        start = annotation.get("start_line")
+        end = annotation.get("end_line", start)
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start < 1
+            or end < start
+            or end > lines
+        ):
+            continue
+        kept.append(annotation)
+    dropped = len(output["annotations"]) - len(kept)
+    if dropped:
+        print(f"Dropped {dropped} invalid check annotation(s).")
+    output["annotations"] = kept
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+os.replace(tmp, path)
+PY
+}
+
 post_check() {
   if ! check_run_enabled; then
     echo "check_run is disabled in .ai-review.yml; skipping the AI review check run."
     return 0
   fi
   if [[ ! -f "$check_payload" ]]; then
+    return 1
+  fi
+  if ! sanitize_check_payload; then
+    echo "::error::Could not sanitize the AI review check payload."
     return 1
   fi
   local url
@@ -158,8 +223,9 @@ if [[ "$verdict" == "error" ]]; then
   fail "The review failed: ${errors}"
 fi
 
-if [[ "$(gh api "$api" --jq .merged)" == "true" ]]; then
-  fail "The pull request is already merged; no review should be published."
+pr_state="$(gh api "$api" --jq .state)"
+if [[ "$pr_state" != "open" ]]; then
+  fail "The pull request is ${pr_state}; no review should be published."
 fi
 
 # gh api rejects --slurp combined with --jq, so paginate into one array and

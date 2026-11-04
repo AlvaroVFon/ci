@@ -110,13 +110,17 @@ class CallerContract(unittest.TestCase):
 
     def test_pins_the_reusable_workflow(self):
         self.assertIn(
-            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v6", self.caller
+            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v7", self.caller
         )
 
     def test_uses_and_scripts_ref_match(self):
         workflow_ref = re.search(r"code-review\.yml@(\S+)", self.caller).group(1)
         scripts_ref = re.search(r"(?m)^      ci-ref:\s*(\S+)", self.caller).group(1)
         self.assertEqual(workflow_ref, scripts_ref)
+
+    def test_pins_the_skills_ref(self):
+        skills_ref = re.search(r"(?m)^      skills-ref:\s*(\S+)", self.caller).group(1)
+        self.assertRegex(skills_ref, r"^(?:[0-9a-f]{40}|v\d+(?:\.\d+)*)$")
 
     def test_grants_the_permissions_the_called_job_needs(self):
         for permission in (
@@ -209,11 +213,29 @@ class ReviewerScripts(unittest.TestCase):
             "code-review-input.json",
             "prepare_review.py",
             "validate_review_report.py",
+            ".ai-review.yml",
+            "from the base SHA",
             "<!-- ai-review -->",
             "Never approve",
         ):
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, text)
+
+    def test_run_review_requires_the_prepare_helper(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertIn('prepare="$bot_dir/assets/prepare_review.py"', text)
+        self.assertIn("missing $prepare", text)
+
+    def test_run_review_clears_stale_artifacts(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'rm -f "$report" "$input" "$payload" "$check_payload"', text
+        )
+
+    def test_run_review_rejects_a_closed_pull_request(self):
+        text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
+        self.assertIn("--jq .state", text)
+        self.assertIn('"$pr_state" != "open"', text)
 
     def test_run_review_rechecks_the_head_after_the_agent(self):
         text = (SCRIPTS / "run-review.sh").read_text(encoding="utf-8")
@@ -227,6 +249,7 @@ class ReviewerScripts(unittest.TestCase):
             "check-runs",
             "--method POST",
             "check_run_enabled",
+            "check_run is disabled in .ai-review.yml",
         ):
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, text)
@@ -367,10 +390,34 @@ class ReviewerScripts(unittest.TestCase):
             ("shell", "git tag -d*"),
             ("shell", "gh pr merge*"),
             ("shell", "gh pr review*"),
+            ("shell", "curl*"),
+            ("shell", "wget*"),
+            ("shell", "gh auth*"),
             ("edit", "*"),
+            ("read", "*.env"),
+            ("read", "*.env.*"),
+            ("read", "*_runner_file_commands*"),
+            ("webfetch", "*"),
+            ("websearch", "*"),
         ):
             with self.subTest(rule=rule):
                 self.assertIn(rule, denied)
+
+    def test_permissions_allow_env_examples_after_denying_secrets(self):
+        rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]
+        read_rules = [
+            (index, rule["resource"], rule["effect"])
+            for index, rule in enumerate(rules)
+            if rule["action"] == "read"
+        ]
+        self.assertIn(("*.env", "deny"), [(r, e) for _, r, e in read_rules])
+        self.assertIn(("*.env.*", "deny"), [(r, e) for _, r, e in read_rules])
+        self.assertIn(("*.env.example", "allow"), [(r, e) for _, r, e in read_rules])
+        env_deny = next(i for i, r, e in read_rules if r == "*.env.*" and e == "deny")
+        env_example = next(
+            i for i, r, e in read_rules if r == "*.env.example" and e == "allow"
+        )
+        self.assertGreater(env_example, env_deny)
 
     def test_permissions_keep_read_only_git_commands_available(self):
         rules = json.loads(PERMISSIONS.read_text(encoding="utf-8"))["permissions"]
@@ -403,6 +450,7 @@ class RunReviewIntegration(unittest.TestCase):
             bot = config / "opencode" / "skills" / "code-review-bot"
             (bot / "assets").mkdir(parents=True)
             (bot / "SKILL.md").write_text("---\nname: code-review-bot\n---\n")
+            (bot / "assets" / "prepare_review.py").write_text("# prepare\n")
             (bot / "assets" / "validate_review_report.py").write_text(
                 "import sys\nsys.exit(0)\n"
             )
@@ -421,6 +469,38 @@ class RunReviewIntegration(unittest.TestCase):
                 "body": "<!-- ai-review -->",
                 "comments": [],
             }
+            check = {
+                "name": "AI review",
+                "output": {
+                    "title": "AI review",
+                    "summary": "test",
+                    "annotations": [
+                        {
+                            "path": "src/app.py",
+                            "start_line": 2,
+                            "end_line": 2,
+                            "annotation_level": "warning",
+                            "message": "keep",
+                        },
+                        {
+                            "path": "src/app.py",
+                            "start_line": 99,
+                            "end_line": 99,
+                            "annotation_level": "warning",
+                            "message": "drop-out-of-range",
+                        },
+                        {
+                            "path": "missing.py",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "annotation_level": "warning",
+                            "message": "drop-missing",
+                        },
+                    ],
+                },
+            }
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("one\ntwo\nthree\nfour\n")
 
             self.write_executable(
                 bin_dir / "npm",
@@ -429,11 +509,17 @@ class RunReviewIntegration(unittest.TestCase):
             self.write_executable(
                 bin_dir / "opencode",
                 "#!/usr/bin/env bash\n"
+                'for artifact in code-review-report.json code-review-input.json code-review-payload.json code-review-check.json; do\n'
+                '  if [[ -e "$TMPDIR/opencode/$artifact" ]]; then\n'
+                '    echo "stale artifact was not cleared: $artifact" >&2\n'
+                "    exit 1\n"
+                "  fi\n"
+                "done\n"
                 'mkdir -p "$TMPDIR/opencode"\n'
                 f"printf '%s' '{json.dumps(report)}' > \"$TMPDIR/opencode/code-review-report.json\"\n"
                 f"printf '%s' '{json.dumps({'config': {'check_run': True}})}' > \"$TMPDIR/opencode/code-review-input.json\"\n"
                 f"printf '%s' '{json.dumps(payload)}' > \"$TMPDIR/opencode/code-review-payload.json\"\n"
-                f"printf '%s' '{json.dumps({'name': 'AI review'})}' > \"$TMPDIR/opencode/code-review-check.json\"\n"
+                f"printf '%s' '{json.dumps(check)}' > \"$TMPDIR/opencode/code-review-check.json\"\n"
                 "exit 0\n",
             )
             self.write_executable(
@@ -453,9 +539,16 @@ class RunReviewIntegration(unittest.TestCase):
                 '  echo "the --slurp option is not supported with --jq or --template" >&2\n'
                 "  exit 1\n"
                 "fi\n"
+                'if [[ "$*" == *"/check-runs --method POST"* ]]; then\n'
+                '  previous=""\n'
+                '  for arg in "$@"; do\n'
+                '    if [[ "$previous" == "--input" ]]; then cp "$arg" "' + str(root / "check-posted.json") + '"; fi\n'
+                '    previous="$arg"\n'
+                "  done\n"
+                "fi\n"
                 'case "$*" in\n'
                 f'  *"/pulls/12 --jq .head.sha"*) printf \'%s\\n\' "{self.SHA}" ;;\n'
-                '  *"/pulls/12 --jq .merged"*) printf \'false\\n\' ;;\n'
+                '  *"/pulls/12 --jq .state"*) printf \'open\\n\' ;;\n'
                 f'  *"/pulls/12/reviews --paginate --slurp"*) printf \'[[{{"commit_id":"{self.SHA}","state":"COMMENTED","body":"<!-- ai-review -->"}}]]\\n\' ;;\n'
                 '  *"/check-runs --method POST"*) printf \'https://github.com/o/r/runs/1\\n\' ;;\n'
                 '  *) echo "unexpected gh call: $*" >&2; exit 1 ;;\n'
@@ -472,15 +565,32 @@ class RunReviewIntegration(unittest.TestCase):
                 "RUNNER_TEMP": str(root),
                 "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             }
+            stale = reports / "opencode"
+            stale.mkdir(parents=True)
+            for name in (
+                "code-review-report.json",
+                "code-review-input.json",
+                "code-review-payload.json",
+                "code-review-check.json",
+            ):
+                (stale / name).write_text("stale\n", encoding="utf-8")
+
             result = subprocess.run(
                 ["bash", str(SCRIPTS / "run-review.sh")],
                 env=env,
+                cwd=root,
                 capture_output=True,
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Posted the AI review check run", result.stdout)
+            self.assertIn("Dropped 2 invalid check annotation(s).", result.stdout)
             self.assertIn("check-runs", gh_log.read_text(encoding="utf-8"))
+            posted = json.loads((root / "check-posted.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["message"] for item in posted["output"]["annotations"]],
+                ["keep"],
+            )
 
 
 if __name__ == "__main__":
