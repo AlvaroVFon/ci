@@ -61,6 +61,11 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn("repository: AlvaroVFon/skills", flat)
         self.assertIn("ref: ${{ inputs.skills-ref }}", flat)
 
+    def test_checks_out_the_pull_request_head(self):
+        self.assertIn(
+            "ref: ${{ github.event.pull_request.head.sha }}", self.flat()
+        )
+
     def test_installs_the_bot_skill(self):
         flat = self.flat()
         self.assertIn("BOT_SKILL_PATH", flat)
@@ -551,6 +556,7 @@ class RunReviewIntegration(unittest.TestCase):
                 f'  *"/pulls/12 --jq .head.sha"*) printf \'%s\\n\' "{self.SHA}" ;;\n'
                 '  *"/pulls/12 --jq .state"*) printf \'open\\n\' ;;\n'
                 f'  *"/pulls/12/reviews --paginate --slurp"*) printf \'[[{{"commit_id":"{self.SHA}","state":"COMMENTED","body":"<!-- ai-review -->"}}]]\\n\' ;;\n'
+                '  *"/contents/src/app.py -f ref="*) printf \'%s\\n\' "b25lCnR3bwp0aHJlZQpmb3VyCg==" ;;\n'
                 '  *"/check-runs --method POST"*) printf \'https://github.com/o/r/runs/1\\n\' ;;\n'
                 '  *) echo "unexpected gh call: $*" >&2; exit 1 ;;\n'
                 "esac\n",

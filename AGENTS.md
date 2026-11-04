@@ -82,10 +82,11 @@ tag exists, so the PR's own review never points at an unpublished workflow.
   without `assets/prepare_review.py` and `assets/validate_review_report.py`, and
   copies `reviewer-permissions.json` to `opencode.json`.
 - That permissions file intentionally disables sharing and subagents, denies all
-  edits/commits/pushes/merges, and allows edits only under `/tmp`. It also denies
-  `.env` and runner-temp reads, web fetch/search and common exfiltration commands.
-  Do not relax these to make a review "work"; shell still runs with runner
-  privileges, so this is defense in depth, not a sandbox.
+  edits/commits/pushes/merges, and allows edits only under `/tmp`. Its `read`
+  rules deny `.env` and runner-temp files, and it denies web fetch/search and
+  common exfiltration commands. Do not relax these to make a review "work";
+  shell and grep still run with runner privileges (grep is pattern-scoped, not
+  path-restricted), so this is defense in depth, not a sandbox.
 - `sign-in.sh` prefers a static `OPENCODE_API_KEY` secret; otherwise it exchanges
   the runner's OIDC token and masks it with `::add-mask::`.
 - `run-review.sh` installs `@opencode/cli@2` globally and publishes through

@@ -74,9 +74,10 @@ of reviews that change without any change in your repo.
    - `setup-reviewer.sh` installs `code-review` and `code-review-bot` in the
      OpenCode config directory, outside the caller repo, together with the
      reviewer policies: the review is read-only, `git push`, `git commit`,
-     `git rebase`, `gh pr merge`, `gh pr review`, file edits, `.env` reads, web
-     fetch/search and common exfiltration commands are denied, and session
-     sharing is disabled so the transcript is never published;
+     `git rebase`, `gh pr merge`, `gh pr review`, file edits, `.env` reads
+     through the read tool, web fetch/search and common exfiltration commands
+     are denied, and session sharing is disabled so the transcript is never
+     published;
    - `run-review.sh` installs the CLI and runs the agent with a prompt that limits
      reading to the diff and the code it calls. The agent writes a
      `code-review-report.json`, a review payload and a check payload, validates
@@ -178,9 +179,10 @@ that content is already visible to whoever can read the repository.
   the client id changes, the job fails at sign-in.
 - The bot reads `.ai-review.yml` from the base SHA. A pull request cannot change the
   policy that judges it.
-- The reviewer policy denies `.env` reads, web fetch/search and common exfiltration
-  commands, but shell still runs with runner privileges. Treat it as defense in
-  depth, not a sandbox.
+- The reviewer policy denies `.env` reads through the read tool, web fetch/search
+  and common exfiltration commands, but shell and grep still run with runner
+  privileges and grep is not path-restricted. Treat it as defense in depth, not
+  a sandbox.
 
 ## Local verification
 

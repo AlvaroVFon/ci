@@ -101,16 +101,59 @@ raise SystemExit(0 if value is not False else 1)
 PY
 }
 
-# The bot helper can annotate file/summary findings at a line that is not in
-# the checked-out file. GitHub may reject the whole check run, so keep only
-# annotations whose path and line range exist in the caller checkout.
+# GitHub validates annotations against the report head SHA, not the merge
+# checkout. Resolve each path at head_sha and drop annotations whose lines do
+# not exist there; otherwise one bad annotation can reject the whole check run.
 sanitize_check_payload() {
-  python3 - "$check_payload" "$PWD" <<'PY'
+  python3 - "$check_payload" "$PWD" "$head_sha" "$GITHUB_REPOSITORY" <<'PY'
+import base64
+import binascii
 import json
 import os
+import subprocess
 import sys
 
-path, root = sys.argv[1], os.path.realpath(sys.argv[2])
+path, root, head_sha, repo = sys.argv[1:5]
+
+def count_lines(data):
+    return data.count(b"\n") + (0 if data.endswith(b"\n") or not data else 1)
+
+cache = {}
+
+def file_lines(relative):
+    if relative in cache:
+        return cache[relative]
+    cache[relative] = None
+    result = subprocess.run(
+        ["git", "show", f"{head_sha}:{relative}"],
+        cwd=root,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        cache[relative] = count_lines(result.stdout)
+        return cache[relative]
+    result = subprocess.run(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/contents/{relative}",
+            "-f",
+            f"ref={head_sha}",
+            "--jq",
+            ".content",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        data = base64.b64decode(result.stdout)
+    except (binascii.Error, ValueError):
+        return None
+    cache[relative] = count_lines(data)
+    return cache[relative]
+
 with open(path, encoding="utf-8") as handle:
     payload = json.load(handle)
 output = payload.get("output")
@@ -120,15 +163,15 @@ if isinstance(output, dict) and isinstance(output.get("annotations"), list):
         if not isinstance(annotation, dict):
             continue
         relative = annotation.get("path")
-        if not isinstance(relative, str) or not relative:
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or relative.startswith("/")
+            or ".." in relative.split("/")
+        ):
             continue
-        target = os.path.realpath(os.path.join(root, relative))
-        if not target.startswith(root + os.sep) or not os.path.isfile(target):
-            continue
-        try:
-            with open(target, "rb") as handle:
-                lines = sum(1 for _ in handle)
-        except OSError:
+        lines = file_lines(relative)
+        if lines is None:
             continue
         start = annotation.get("start_line")
         end = annotation.get("end_line", start)

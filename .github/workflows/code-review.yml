@@ -48,6 +48,7 @@ jobs:
       - name: Checkout caller repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Checkout skills
