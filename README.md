@@ -26,12 +26,12 @@ jobs:
       pull-requests: write
       checks: write
       id-token: write
-    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v7
+    uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v8
     with:
       model: opencode-go/deepseek-v4.1-flash
       # Tag or commit of AlvaroVFon/skills with code-review and code-review-bot.
       skills-ref: <skills-tag-or-commit>
-      ci-ref: v7
+      ci-ref: v8
       oidc-client-id: sk_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 

@@ -115,7 +115,7 @@ class CallerContract(unittest.TestCase):
 
     def test_pins_the_reusable_workflow(self):
         self.assertIn(
-            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v7", self.caller
+            "uses: AlvaroVFon/ci/.github/workflows/code-review.yml@v8", self.caller
         )
 
     def test_uses_and_scripts_ref_match(self):
