@@ -545,6 +545,10 @@ class RunReviewIntegration(unittest.TestCase):
                 '  echo "the --slurp option is not supported with --jq or --template" >&2\n'
                 "  exit 1\n"
                 "fi\n"
+                'if [[ "$*" == *"/contents/"* && "$*" != *"-X GET"* ]]; then\n'
+                '  echo "the contents endpoint requires GET" >&2\n'
+                "  exit 1\n"
+                "fi\n"
                 'if [[ "$*" == *"/check-runs --method POST"* ]]; then\n'
                 '  previous=""\n'
                 '  for arg in "$@"; do\n'

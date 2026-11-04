@@ -136,6 +136,8 @@ def file_lines(relative):
         [
             "gh",
             "api",
+            "-X",
+            "GET",
             f"repos/{repo}/contents/{relative}",
             "-f",
             f"ref={head_sha}",
